@@ -28,7 +28,7 @@ no diretório real pelos JARs e log. GitHub CLI não está instalado.
 ## Verificado nesta entrega
 
 - Compilação Java/Fabric bem-sucedida com Loom 1.8.13 e Gradle 8.10.2/JDK 21.
-- 17 testes automatizados Python, com banco/diários temporários isolados, incluindo
+- 17 testes automatizados Python passaram, com banco/diários temporários isolados, incluindo
   transporte HTTP por socket loopback real (payloads sintéticos, sem Minecraft).
 - `pip check`: sem dependências quebradas.
 - Backend inicializado em 127.0.0.1:8765, health e estado autenticado consultados;
@@ -39,6 +39,17 @@ no diretório real pelos JARs e log. GitHub CLI não está instalado.
 - Repositório remoto oficial inicialmente privado, depois tornado público pelo
   proprietário e novamente conferido. A conta conectada possui acesso de escrita.
   Não havia branches nem histórico inicial.
+- 35 arquivos de código/documentação publicados em main no commit `f599dc9`,
+  precedido por `5af8cbf` com as exclusões de arquivos privados. A árvore Git
+  remota foi comparada ao index auditado, e main local passou a acompanhar origin/main.
+- JAR instalado na pasta mods identificada. Hash do instalado igual ao build.
+  Token da configuração do mod conferido contra o backend, sem expor seu valor.
+- Backup completo do mundo ia criado por Install-Mod.ps1 antes da instalação,
+  com comparação SHA-256 de cada arquivo. Backup fora do repositório, na pasta
+  MineLifeAI-backups, execução `install-20261028-153129-275`. O save original não
+  foi editado. Processos de teste/compilação foram encerrados ao finalizar.
+- Auditoria dos arquivos do commit e `git diff --cached --check` concluídos;
+  banco, configurações, logs, caches, saves e diários locais não publicados.
 
 ## Pendências e limites
 
