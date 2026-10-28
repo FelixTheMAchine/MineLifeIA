@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>MineLife AI — Life Observer</title>
+<style>body{font:16px system-ui;max-width:1100px;margin:30px auto;padding:0 18px;background:#12201c;color:#e4eee8}section{background:#1d3028;padding:18px;margin:16px 0;border-radius:8px}pre{white-space:pre-wrap;overflow-wrap:anywhere}button,input{padding:10px;margin:4px}h1{color:#b1eabf}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}</style>
+<h1>MineLife AI · Life Observer</h1>
+<p>Personalidade simulada. Descobertas exigem evidências. Publicação automática desligada.</p>
+<label>Token local <input id="token" type="password" autocomplete="off"></label><button id="connect">Conectar painel</button>
+<p id="connection">Aguardando conexão.</p>
+<div><button data-action="start">Iniciar</button><button data-action="pause">Pausar</button><button data-action="resume">Retomar</button><button data-action="stop">Parar</button></div>
+<p>F8 autoriza/desativa no jogo · F9 pausa/retoma · F10 emergência.</p>
+<div class="grid"><section><h2>Estado</h2><pre id="status"></pre></section><section><h2>Objetivos</h2><pre id="goals"></pre></section><section><h2>Perguntas e hipóteses</h2><pre id="questions"></pre></section><section><h2>Experimentos</h2><pre id="experiments"></pre></section><section><h2>Descobertas</h2><pre id="knowledge"></pre></section><section><h2>Sincronização GitHub</h2><pre id="sync"></pre></section></div>
+<section><h2>Life Journal</h2><div id="journal"></div></section>
+<script>
+let token='',busy=false;
+const put=(id,text)=>document.getElementById(id).textContent=text;
+async function api(path,method='GET'){const r=await fetch(path,{method,headers:{Authorization:'Bearer '+token}});const b=await r.json();if(!r.ok)throw Error(b.detail||r.status);return b;}
+document.getElementById('connect').onclick=()=>{token=document.getElementById('token').value;refresh();};
+document.querySelectorAll('[data-action]').forEach(b=>b.onclick=async()=>{try{await api('/api/control/'+b.dataset.action,'POST');await refresh();}catch(e){put('connection',e.message);}});
+async function refresh(){if(!token||busy)return;busy=true;try{const s=await api('/api/state');put('connection',s.connected?'Minecraft conectado':'Aguardando Minecraft / conexão interrompida');const o=s.observation;put('status',o?JSON.stringify({dia:o.day,hora:o.time,ativo:o.active,vida:o.player.health,fome:o.player.food,posicao:[o.player.x,o.player.y,o.player.z]},null,2):'Nenhum mundo observado');for(const [id,key] of [['goals','Goals'],['questions','Hypotheses'],['experiments','Experiments'],['knowledge','Knowledge']])put(id,JSON.stringify(s[key],null,2));put('sync','Automático: DESLIGADO\n'+JSON.stringify(s.PublicationQueue,null,2));const j=document.getElementById('journal');j.replaceChildren();for(const e of s.JournalEntries){const p=document.createElement('pre');p.textContent='Dia '+e.day+' · '+e.kind+'\n'+e.text;j.append(p);}}catch(e){put('connection',e.message);}finally{busy=false;}}
+setInterval(refresh,1500);
+</script></html>

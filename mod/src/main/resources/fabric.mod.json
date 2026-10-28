@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "minelife_ai",
+  "version": "${version}",
+  "name": "MineLife AI",
+  "description": "Controle local supervisionavel, curiosidade e evidencias persistentes.",
+  "environment": "client",
+  "entrypoints": {"client": ["ai.minelife.MineLifeClient"]},
+  "depends": {"fabricloader": ">=0.16.7", "minecraft": "1.21.1", "java": ">=21", "fabric-api": "*"}
+}
