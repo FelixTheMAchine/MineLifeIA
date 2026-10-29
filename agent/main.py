@@ -10,18 +10,21 @@ from agent.memory import MemoryManager
 from agent.journal.writer import JournalWriter
 from agent.engine import CognitiveEngine
 from agent.protocol import Step
+from agent.llm import LanguageAdvisor
 
 
 def create_app(root=ROOT, config=None):
     config = config or load_config(root)
     memory = MemoryManager(root / 'data' / 'memory.sqlite3')
     journal = JournalWriter(memory, root / 'journals')
-    engine = CognitiveEngine(memory, journal)
+    engine = CognitiveEngine(memory, journal, config.get('planning'))
     lock = asyncio.Lock()
+    advisor = LanguageAdvisor(config.get('llm'))
 
     @asynccontextmanager
     async def lifespan(app):
         yield
+        await advisor.close()
         memory.close()
 
     app = FastAPI(title='MineLife AI', lifespan=lifespan, docs_url=None, redoc_url=None)
@@ -47,7 +50,12 @@ def create_app(root=ROOT, config=None):
 
     @app.get('/health')
     async def health():
-        return {'service': 'MineLife AI', 'protocol': 1, 'auto_publish': False}
+        return {'service': 'MineLife AI', 'version': '0.2.0', 'protocol': 1, 'auto_publish': False}
+
+    @app.get('/bridge/handshake')
+    async def handshake():
+        return {'protocol': 1, 'version': '0.2.0', 'transport': 'HTTP/1.1',
+                'heartbeat_ms': 250, 'lease_ms': 3000, 'actions': ['approach','break','collect','observe','explore','craft']}
 
     @app.get('/', response_class=HTMLResponse)
     async def index():
@@ -56,7 +64,7 @@ def create_app(root=ROOT, config=None):
     @app.get('/api/state')
     async def state():
         async with lock:
-            return engine.snapshot()
+            return {**engine.snapshot(), 'llm': advisor.snapshot()}
 
     @app.post('/api/control/{action}')
     async def control(action: str):
@@ -74,7 +82,22 @@ def create_app(root=ROOT, config=None):
     async def step(payload: Step):
         async with lock:
             try:
-                return engine.step(payload)
+                engine.advice = advisor.result
+                response = engine.step(payload)
+                engine.record_advice(advisor.result)
+                if payload.active and payload.armed and not payload.player.danger:
+                    goals = engine.goals.rows(payload.world)
+                    available=[{'subject':g['subject'],'description':g['description']} for g in goals if g['status']=='pending'][:8]
+                    experiences=memory.rows('SELECT id,type,day,description,evidence FROM Events WHERE world=? AND verified=1 ORDER BY timestamp DESC LIMIT 8',(payload.world,))
+                    cue=' '.join(g['description'] for g in available[:4])
+                    recalled=engine.autobiography.recall(payload.world,cue,3) if cue else []
+                    philosophical=memory.rows('SELECT theme,question,interpretation,origin_event FROM PhilosophicalQuestions WHERE world=? ORDER BY created DESC LIMIT 4',(payload.world,))
+                    advisor.schedule({'world':payload.world, 'goals':available,
+                                      'knowledge':memory.rows('SELECT subject,status FROM Knowledge WHERE world=? LIMIT 30',(payload.world,)),
+                                      'experiences':experiences, 'source_event_ids':[e['id'] for e in experiences],
+                                      'recalled_memories':[{'day':m['day'],'theme':m['theme'],'summary':m['summary']} for m in recalled],
+                                      'philosophy':philosophical},'integrated')
+                return response
             except ValueError as exc:
                 memory.db.rollback()
                 raise HTTPException(409, str(exc)) from exc
@@ -86,7 +109,7 @@ def main():
     import uvicorn
     app = create_app()
     # Nunca use 0.0.0.0: esta aplicação controla o personagem local.
-    uvicorn.run(app, host='127.0.0.1', port=8765, access_log=False)
+    uvicorn.run(app, host='127.0.0.1', port=8765, http='h11', ws='none', access_log=False)
 
 
 if __name__ == '__main__':

@@ -1,72 +1,47 @@
-# Status — 2026-10-28
+# MineLife AI — status 0.2.0 — 2026-10-29
 
-## Recuperação e ambiente
+## Ponto de partida e preservação
 
-A pasta correta do projeto foi confirmada por Get-Location. Na primeira inspeção
-ela estava vazia e não continha Git, código ou instruções anteriores. Foi localizado
-um backup prévio de ia fora do projeto, sem código recuperável. Nenhum save foi
-alterado durante o desenvolvimento e testes automatizados.
+Workspace do projeto e remote oficial confirmados; branch `main` é a única branch de publicação. Existe o checkpoint `safety/pre-0.2-20261028` no commit anterior ao trabalho 0.2. O histórico remoto não foi reescrito. Alterações locais e a memória anterior foram mantidas.
 
-Confirmados: Temurin JDK 21.0.12.1, Python 3.11.9, Git 2.56.0. Minecraft 1.21.1,
-Loader 0.20.1, Fabric API 0.116.17+1.21.1 e MCA 7.7.19+1.21.1 foram identificados
-no diretório real pelos JARs e log. GitHub CLI não está instalado.
+Antes desta extensão, a versão 0.1 havia sido observada pelo usuário no Minecraft: um tronco de bétula foi removido, 1 item foi coletado e o diário sobreviveu ao reinício. A base SQLite preservava 3 eventos, 1 conhecimento confirmado, 1 hipótese, 1 experimento, 1 objetivo e 2 entradas de diário.
 
-## Implementado
+## Implementado nesta continuidade
 
-- Mod cliente: observação de árvores, câmera, navegação local, mineração nativa,
-  coleta, HUD, F8/F9/F10, liberação de teclas e interrupção por desconexão/perigo.
-- Ponte HTTP local autenticada, sessão/mundo/IDs, deduplicação, prazos e reconexão.
-- Confirmação somente por leituras do servidor integrado, incluindo estatística
-  de mineração e inventário. Não há edição direta de mundo/save.
-- SQLite persistente; perguntas, hipóteses, comandos, experimentos e conhecimento.
-- Diário em primeira pessoa baseado em eventos; reflexões imediatas, fechamento
-  de dias anteriores observados e exportação imutável em journals/ por mundo.
-- Publicador restrito ao repositório oficial, dry-run sem rede/Git, fila offline,
-  ordem por mundo/dia, comparação imutável e bloqueio de conteúdo sensível.
-- Painel local, scripts de execução, build, teste, instalação com backup e auditoria.
+- Motor contínuo: descoberta concluída não interrompe planejamento; escolhe alvos novos, receitas desbloqueadas e fronteiras anunciadas. Planejamento fica limitado por intervalo, número de metas, retentativas e cooldowns. Pausa, emergência, desconexão, perigo e ausência de ação segura permanecem estados distintos.
+- Exploração: memória em regiões locais, candidatos de fronteira anunciados pelo mod, BFS sobre chão sólido e revalidação durante o movimento. Não há viagens longas, cavernas ou promessa de caminho seguro geral.
+- Crafting real 2×2: inventário é inspecionado, somente receitas vanilla desbloqueadas compatíveis e anunciadas são consideradas; o executor usa recipe book/telas nativas. A confirmação requer receita, consumo, aumento de item e estatística CRAFTED lidos do servidor. Crafting 3×3 e usar bancada não estão implementados.
+- Personalidade e motivações persistentes: preset ampliado, mudanças pequenas vinculadas a eventos, interesses de engenharia/agricultura/arquitetura/mineração/exploração usados em prioridades. Prudência altera a margem de pausa e a personalidade influencia escolhas viáveis. Sociabilidade não produz ações sem integração MCA.
+- Memória autobiográfica: migração SQLite v3 aditiva, tabela de eventos salientes e recuperação lexical por mundo. Reflexões contextuais de conhecimento, criação, lugares e falhas guardam perguntas, versões anteriores e IDs de evidência.
+- Diário: entradas novas usam proveniência versionada, fatos dos eventos, interpretação filosófica explicitamente provisória e associação a lembrança anterior. Validação reproduz o texto a partir de fontes; entradas antigas permanecem imutáveis. Publicador valida esse formato e não aceita texto alterado sem prova.
+- LLM opcional: tarefas estruturadas de cognição, filosofia, autobiografia, metas e interpretação social. Contexto inclui experiências, lembranças e reflexões. Saídas são propostas não verificadas em SQLite/Observer; somente preferência por uma meta já existente pode ordenar o planejamento. LLM continua desligado por padrão e não redige o diário público.
+- Life Observer separa observação, interpretação, pergunta, hipótese, decisão, reflexão, lembrança e sugestão não verificada.
+- Instalador configura o mod com apenas seu token local. Cópia do save e hashes de backup precedem qualquer substituição.
 
-## Verificado nesta entrega
+## Validação executada
 
-- Compilação Java/Fabric bem-sucedida com Loom 1.8.13 e Gradle 8.10.2/JDK 21.
-- 17 testes automatizados Python passaram, com banco/diários temporários isolados, incluindo
-  transporte HTTP por socket loopback real (payloads sintéticos, sem Minecraft).
-- `pip check`: sem dependências quebradas.
-- Backend inicializado em 127.0.0.1:8765, health e estado autenticado consultados;
-  nenhuma sessão de Minecraft nem entradas reais presentes nesse momento.
-- Gradle Wrapper com checksum SHA-256 conferido contra a distribuição oficial.
-- Dry-run de produção: zero entradas, zero arquivos a publicar; nenhuma experiência
-  real foi inventada para preencher o diário.
-- Repositório remoto oficial inicialmente privado, depois tornado público pelo
-  proprietário e novamente conferido. A conta conectada possui acesso de escrita.
-  Não havia branches nem histórico inicial.
-- 35 arquivos de código/documentação publicados em main no commit `f599dc9`,
-  precedido por `5af8cbf` com as exclusões de arquivos privados. A árvore Git
-  remota foi comparada ao index auditado, e main local passou a acompanhar origin/main.
-- JAR instalado na pasta mods identificada. Hash do instalado igual ao build.
-  Token da configuração do mod conferido contra o backend, sem expor seu valor.
-- Backup completo do mundo ia criado por Install-Mod.ps1 antes da instalação,
-  com comparação SHA-256 de cada arquivo. Backup fora do repositório, na pasta
-  MineLifeAI-backups, execução `install-20261028-153129-275`. O save original não
-  foi editado. Processos de teste/compilação foram encerrados ao finalizar.
-- Auditoria dos arquivos do commit e `git diff --cached --check` concluídos;
-  banco, configurações, logs, caches, saves e diários locais não publicados.
+- Remote oficial confirmado, público e com acesso de escrita. Antes da atualização `main` estava em `8afd0de268d9bf7a5cdf8a2e5b7d5c7ee03cdf55`.
+- `python -m unittest discover -s tests -v`: 41 testes passaram em SQLite temporário, incluindo continuação após descoberta, crafting com prova, autonomia sem repetição, limites/cooldown, reconexão, isolamento, personalidade, memória filosófica, proveniência do diário, rascunhos LLM não verificados e transporte Java HTTP/1.1 contra FastAPI loopback. Não é teste dentro do jogo.
+- `mod/gradlew.bat build`: sucesso. O teste `ControlGate` executou 14 verificações de tecla/epoch; o build confirma compatibilidade das chamadas de API usadas pelo código, não gameplay.
+- `pip check`: dependências consistentes. Parser PowerShell: scripts sem erros sintáticos.
+- JAR 0.2 instalado pelo `Install-Mod.ps1` depois de cópia e comparação SHA-256 do mundo `ia`; hash do JAR instalado corresponde ao build. O Minecraft permaneceu fechado durante a atualização.
+- Migração do banco local v2→v3 com backup SQLite verificado; `integrity_check=ok`, fingerprints das tabelas históricas idênticos. Permaneceram exatamente 3 Events, 1 Knowledge, 1 Hypothesis, 2 JournalEntries, 1 Experiment e 1 Goal.
+- O contrato Java–Python verificou handshake + observação + comando via HTTP/1.1, sem Upgrade. Ainda não observou o mod em cliente Minecraft na versão 0.2.
+- Backend iniciado pelo script e consultado com o token local: handshake autenticado, protocolo 1/HTTP/1.1 e estado `PAUSED`; nenhuma sessão Minecraft foi alegada. Serviço foi encerrado depois da verificação.
 
-## Pendências e limites
+## Estado que exige jogo real
 
-- **Teste no Minecraft não executado.** Compilação e fixtures não validam física,
-  input real, compatibilidade em execução com MCA ou sucesso da primeira árvore.
-- Navegação é limitada a terreno local com piso seguro; não explora indefinidamente,
-  não atravessa água, não constrói passagem. Falhas de alvo ficam registradas.
-- Após uma descoberta confirmada, o MVP conserva a pergunta e aguarda novas
-  habilidades. Sobrevivência completa, LLM e evolução da personalidade não existem.
-- Diário real depende de eventos reais. Dia atual só é finalizado quando um dia
-  posterior for observado. Publicação automática permanece desativada.
-- Git local sem credenciais HTTPS disponíveis; GitHub CLI ausente. Publicação
-  inicial usa o conector autenticado. Futuro envio pelo script requer autenticar
-  GitHub CLI, validar diário real e autorizar a configuração local.
+- A versão 0.2 ainda não teve movimento, exploração, crafting ou parada de emergência observados no Minecraft. O sucesso real anterior foi na 0.1 e não valida mudanças recentes.
+- A tela 2×2/recipe book e a resposta do integrado não foram acionadas em jogo. Compatibilidade em runtime com MCA Reborn permanece desconhecida.
+- Não existem combate, fuga, alimentação, cama/abrigo, sobrevivência noturna funcional, mineração geral com ferramentas, interfaces 3×3/fornalha/baús, construção física, agricultura, redstone, economia, ações sociais MCA, casamento, família ou vila.
+- Filosofia cobre atualmente conhecimento, criação, lugares alcançados e falhas repetidas; não implementa todas as categorias solicitadas. Memória associativa é lexical e local, ainda não uma narrativa de longo prazo ilimitada.
+- O LLM não foi conectado, nenhum modelo foi escolhido/baixado e não houve chamada de API. Propostas de diário ficam separadas da narrativa factual para não publicar afirmações que não possam ser verificadas.
+- Navegação fica restrita a fronteiras próximas com piso carregado. À noite ou sem caminho viável, o agente pode aguardar; não possui abrigo/fuga para continuar em segurança.
 
-## Próximas tarefas
+## Dados privados e publicação
 
-Executar o checklist real do README com backup, coletar evidências de uma árvore,
-verificar persistência após reinício, observar uma virada do dia, revisar o Markdown
-e validar dry-run real antes de habilitar qualquer publicação do diário.
+O banco migrado e seus backups, saves, token, configurações, logs e diários ficam locais e são ignorados pelo Git. Publicação automática e de diários continua desligada. Nenhum diário ou memória real acompanha a sincronização de código.
+
+## Próximo trabalho
+
+Validar 0.2 no cliente: movimento/árvore, segundo objetivo, crafting 2×2 e F10/desconexão. Em seguida implementar necessidades básicas seguras (comida, abrigo noturno e recuperação) antes de ampliar crafting, construção, agricultura ou MCA. Atualizar este arquivo somente com evidência observada.

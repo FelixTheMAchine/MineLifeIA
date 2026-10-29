@@ -1,0 +1,69 @@
+"""Reflexão narrativa contextual. As interpretações são simuladas e ligadas a eventos verificáveis."""
+import json
+from uuid import uuid4
+from agent.memory import now
+
+
+class PhilosophicalReflectionEngine:
+    # Temas são acionados por experiências e limiares observáveis, nunca por sorteio periódico.
+    def __init__(self, memory, autobiography):
+        self.m, self.autobiography = memory, autobiography
+
+    def consider(self, world, day, session, event_id):
+        rows = self.m.rows('SELECT * FROM Events WHERE id=? AND world=? AND verified=1', (event_id, world))
+        if not rows:
+            return None
+        event = rows[0]
+        data = json.loads(event['evidence'])
+        theme = None
+        subject = str(data.get('subject', ''))
+        if event['type'] == 'collected' and subject:
+            theme = 'knowledge'
+            question = f"O que a coleta verificada de {subject} confirma nesta experiência, e que usos ainda precisam de uma prova própria?"
+            interpretation = f"A evidência confirma a coleta de {subject}; ela não demonstra, por si só, todas as suas aplicações."
+            importance, novelty = .82, .9
+        elif event['type'] == 'crafted' and data.get('recipe'):
+            theme = 'creation'
+            output = next((k for k in data if k.endswith('_id')), 'um material')
+            question = f"Que novas possibilidades posso investigar com o resultado observado da receita {data['recipe']}?"
+            interpretation = f"A receita {data['recipe']} foi observada nesta sessão; qualquer uso posterior do resultado ainda depende de outra ação verificada."
+            importance, novelty = .78, .85
+        elif event['type'] == 'region_reached':
+            theme = 'place'
+            position = data.get('position', {})
+            question = f"O que mudou na minha compreensão do lugar em torno das coordenadas observadas {position.get('x','?')}, {position.get('y','?')}, {position.get('z','?')}?"
+            interpretation = "A posição alcançada e o bioma registrado acrescentam uma observação ao mapa; ainda não bastam para chamar o lugar de familiar ou seguro."
+            importance, novelty = .66, .72
+        elif event['type'] == 'attempt_failed':
+            theme = 'failure'
+            goal_rows = self.m.rows('SELECT g.status,p.attempts,p.last_error FROM Goals g JOIN GoalPlans p ON p.goal_id=g.id '
+                                    'WHERE g.world=? AND p.goal_id=? LIMIT 1', (world, data.get('goal','')))
+            attempts = goal_rows[0]['attempts'] if goal_rows else 1
+            if attempts < 2:
+                return None
+            question = f"Qual condição observada na tentativa de {data.get('reason','ação')} consigo mudar antes de voltar a investigar este objetivo?"
+            interpretation = "O resultado foi insuficiente para confirmar a hipótese; interromper a repetição preserva a diferença entre uma tentativa e um fato."
+            importance, novelty = .72, .65
+        else:
+            return None
+
+        prior = self.m.rows('SELECT current FROM PhilosophicalRevisions WHERE world=? AND theme=? ORDER BY created DESC LIMIT 1',
+                            (world, theme))
+        previous = prior[0]['current'] if prior else ''
+        existing = self.m.rows('SELECT id FROM PhilosophicalQuestions WHERE world=? AND theme=? AND origin_event=?',
+                               (world, theme, event_id))
+        if existing:
+            return self.m.rows('SELECT * FROM PhilosophicalQuestions WHERE id=?', (existing[0]['id'],))[0]
+        qid = str(uuid4())
+        source_ids = json.dumps([event_id])
+        created = now()
+        self.m.db.execute('INSERT INTO PhilosophicalQuestions VALUES(?,?,?,?,?,?,?,?)',
+                          (qid, world, theme, question, event_id, interpretation, 'open', created))
+        reason = ('Primeira interpretação baseada no acontecimento' if not previous else
+                  'Revisão da interpretação após nova evidência do mesmo tema')
+        self.m.db.execute('INSERT INTO PhilosophicalRevisions VALUES(?,?,?,?,?,?,?,?,?,?)',
+                          (str(uuid4()), world, theme, event_id, previous, interpretation, source_ids, reason,
+                           .75 if previous else .6, created))
+        self.autobiography.record(world, event_id, theme, importance, novelty,
+                                  {'event_type': event['type'], 'day': day, 'subject': subject})
+        return self.m.rows('SELECT * FROM PhilosophicalQuestions WHERE id=?', (qid,))[0]

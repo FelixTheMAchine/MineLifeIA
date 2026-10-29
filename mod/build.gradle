@@ -2,7 +2,7 @@ plugins {
     id 'fabric-loom' version '1.8.13'
     id 'maven-publish'
 }
-version = '0.1.0'
+version = '0.2.0'
 group = 'ai.minelife'
 base { archivesName = 'minelife-ai' }
 repositories { mavenCentral() }
@@ -15,3 +15,9 @@ dependencies {
 java { toolchain { languageVersion = JavaLanguageVersion.of(21) }; withSourcesJar() }
 tasks.withType(JavaCompile).configureEach { options.release = 21; options.encoding = 'UTF-8' }
 processResources { inputs.property 'version', project.version; filesMatching('fabric.mod.json') { expand version: project.version } }
+tasks.register('verifyControl', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'ai.minelife.ControlGateTest'
+}
+check.dependsOn verifyControl

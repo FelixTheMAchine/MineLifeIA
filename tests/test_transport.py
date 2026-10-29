@@ -8,6 +8,9 @@ import tempfile
 import threading
 import time
 import unittest
+import os
+import subprocess
+import shutil
 from uuid import uuid4
 import httpx
 import uvicorn
@@ -21,7 +24,7 @@ class TransportTest(unittest.TestCase):
             sock.bind(('127.0.0.1', 0))
             port = sock.getsockname()[1]
             app = create_app(Path(td), {'token': 'test-secret-' * 4})
-            server = uvicorn.Server(uvicorn.Config(app, log_level='error', access_log=False))
+            server = uvicorn.Server(uvicorn.Config(app, http='h11', ws='none', log_level='error', access_log=False))
             thread = threading.Thread(target=server.run, kwargs={'sockets': [sock]}, daemon=True)
             thread.start()
             try:
@@ -53,3 +56,27 @@ class TransportTest(unittest.TestCase):
                 thread.join(timeout=5)
                 sock.close()
             self.assertFalse(thread.is_alive())
+
+    def test_java_http11_handshake_and_observation_command_exchange(self):
+        root=Path(__file__).resolve().parents[1]
+        classes=root/'mod/build/classes/java/test'
+        if not shutil.which('java') or not (classes/'ai/minelife/BridgeContractTest.class').exists():
+            self.skipTest('Compile o mod antes para executar o teste de transporte Java')
+        with tempfile.TemporaryDirectory() as td:
+            sock=socket.socket();sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
+            app=create_app(Path(td),{'token':'transport-fixture'})
+            versions=[]
+            @app.middleware('http')
+            async def capture(request,call_next):
+                versions.append((request.scope['http_version'],request.headers.get('upgrade')))
+                return await call_next(request)
+            server=uvicorn.Server(uvicorn.Config(app,http='h11',ws='none',log_level='error',access_log=False))
+            thread=threading.Thread(target=server.run,kwargs={'sockets':[sock]},daemon=True);thread.start()
+            try:
+                deadline=time.monotonic()+5
+                while not server.started and time.monotonic()<deadline:time.sleep(.02)
+                run=subprocess.run(['java','-cp',str(classes),'ai.minelife.BridgeContractTest',f'http://127.0.0.1:{port}'],capture_output=True,text=True,timeout=15)
+                self.assertEqual(run.returncode,0,run.stderr)
+                self.assertEqual(versions,[('1.1',None),('1.1',None)])
+            finally:
+                server.should_exit=True;thread.join(5);sock.close()

@@ -35,6 +35,19 @@ class Result(StrictModel):
     evidence: dict = Field(default_factory=dict)
 
 
+class Frontier(Pos):
+    safe: bool
+    path_length: int = Field(ge=1, le=64)
+
+
+class RecipeOffer(StrictModel):
+    id: str = Field(pattern=r'^minecraft:[a-z0-9_/]+$', max_length=128)
+    input_id: str = Field(pattern=r'^minecraft:[a-z0-9_]+$', max_length=128)
+    input_count: int = Field(default=1, ge=1, le=4)
+    output_id: str = Field(pattern=r'^minecraft:[a-z0-9_]+$', max_length=128)
+    output_count: int = Field(ge=1, le=64)
+
+
 class Step(StrictModel):
     protocol: Literal[1]
     session: UUID
@@ -49,3 +62,10 @@ class Step(StrictModel):
     blocks: list[Block] = Field(max_length=128)
     results: list[Result] = Field(max_length=64)
     running: UUID | None = None
+    capabilities: list[str] = Field(default_factory=lambda: ['approach', 'break', 'collect'], max_length=16)
+    control_state: Literal['ACTIVE', 'PAUSED', 'EMERGENCY_STOP', 'DISCONNECTED', 'DISABLED'] | None = None
+    control_epoch: int = Field(default=0, ge=0)
+    biome: str = Field(default='unknown', max_length=128)
+    frontiers: list[Frontier] = Field(default_factory=list, max_length=16)
+    entities: list[str] = Field(default_factory=list, max_length=32)
+    recipes: list[RecipeOffer] = Field(default_factory=list, max_length=32)

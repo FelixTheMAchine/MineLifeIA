@@ -1,0 +1,14 @@
+{
+  "planning": {"decision_interval": 2.0, "max_active_goals": 8},
+  "llm": {
+    "provider": "none",
+    "model": "",
+    "interval_seconds": 60,
+    "calls_per_hour": 12,
+    "max_output_tokens": 384,
+    "api_key_env": "MINELIFE_LLM_API_KEY"
+  },
+  "auto_publish": false,
+  "journal_publish_approved": false,
+  "journal_allow_public": false
+}

@@ -47,6 +47,10 @@ final class Navigator {
     }
 
     boolean plan(BlockPos target, boolean collect) {
+        return plan(target, collect, false);
+    }
+
+    boolean plan(BlockPos target, boolean collect, boolean exact) {
         route.clear(); stuckTicks = 0; lastPosition = null;
         BlockPos start = mc.player.getBlockPos();
         ArrayDeque<BlockPos> queue = new ArrayDeque<>();
@@ -55,7 +59,7 @@ final class Navigator {
         BlockPos end = null;
         while (!queue.isEmpty() && parent.size() < 1400) {
             BlockPos p = queue.remove();
-            boolean goal = collect ? Vec3d.ofBottomCenter(p).squaredDistanceTo(Vec3d.ofBottomCenter(target)) < 1.2
+            boolean goal = exact ? p.equals(target) : collect ? Vec3d.ofBottomCenter(p).squaredDistanceTo(Vec3d.ofBottomCenter(target)) < 1.2
                                    : visibleFrom(Vec3d.ofBottomCenter(p).add(0, 1.62, 0), target);
             if (goal) { end = p; break; }
             for (Direction d : Direction.Type.HORIZONTAL) {
@@ -72,6 +76,30 @@ final class Navigator {
         if (end == null) return false;
         while (!end.equals(start)) { route.addFirst(end); end = parent.get(end); }
         return true;
+    }
+
+    /** Fronteiras alcançáveis por BFS limitada. Não altera a rota em execução. */
+    List<BlockPos> frontiers() {
+        BlockPos start = mc.player.getBlockPos();
+        ArrayDeque<BlockPos> queue = new ArrayDeque<>();
+        Map<BlockPos, Integer> distance = new HashMap<>();
+        Map<String, BlockPos> regions = new LinkedHashMap<>();
+        queue.add(start); distance.put(start, 0);
+        while (!queue.isEmpty() && distance.size() < 600) {
+            BlockPos p = queue.remove(); int steps = distance.get(p);
+            if (steps >= 4 && p.getSquaredDistance(start) <= 13*13) {
+                String key = Math.floorDiv(p.getX(),8)+":"+Math.floorDiv(p.getY(),16)+":"+Math.floorDiv(p.getZ(),8);
+                regions.putIfAbsent(key, p);
+            }
+            if (steps >= 18) continue;
+            for (Direction d : Direction.Type.HORIZONTAL) for (int dy : new int[]{0,1,-1}) {
+                BlockPos next = p.offset(d).up(dy);
+                if (distance.containsKey(next) || next.getSquaredDistance(start)>13*13 || !walkable(next)) continue;
+                if (dy==1 && !passable(p.up(2)) || dy==-1 && !passable(next.up(2))) continue;
+                distance.put(next,steps+1); queue.add(next); break;
+            }
+        }
+        return regions.values().stream().limit(16).toList();
     }
 
     /** 1 = chegou, 0 = avançando, -1 = caminho inválido/travado. */

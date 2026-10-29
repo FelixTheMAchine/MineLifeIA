@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 from agent.config import ROOT, load_config
 from agent.memory import MemoryManager
-from agent.journal.writer import JournalWriter
+from agent.journal.writer import JournalWriter, valid_narrative
 
 REPOSITORY = 'FelixTheMAchine/MineLifeIA'
 REMOTE = 'https://github.com/' + REPOSITORY + '.git'
@@ -44,23 +44,8 @@ class GitHubPublisher:
             sources = self.m.rows('SELECT * FROM JournalEntries WHERE world=? AND day=? ORDER BY timestamp',
                                   (daily['world'], daily['day']))
             for entry in sources:
-                ids = json.loads(entry['evidence_ids'])
-                if not ids:
-                    raise ValueError('Diário sem evidência')
-                for eid in ids:
-                    events = self.m.rows('SELECT * FROM Events WHERE id=? AND world=? AND day=? AND verified=1',
-                                         (eid, entry['world'], entry['day']))
-                    if not events:
-                        raise ValueError('Referência de evidência inexistente ou não verificada')
-                    if events[0]['description'] not in entry['text']:
-                        raise ValueError('Narrativa diverge da evidência')
-                # Além das frases comprovadas, apenas o prefácio determinístico é permitido.
-                verified_descriptions = list(dict.fromkeys(self.m.rows('SELECT description FROM Events WHERE id=?', (eid,))[0]['description'] for eid in ids))
-                suffix = '\n\n'.join(verified_descriptions)
-                intros = ('Hoje registrei uma descoberta apoiada no que observei.',
-                          'Hoje acompanhei minhas tentativas e as perguntas que elas trouxeram.')
-                if entry['text'] not in [intro + '\n\n' + suffix for intro in intros]:
-                    raise ValueError('Narrativa contém afirmações sem evidências')
+                if not self.writer.validate_entry(entry):
+                    raise ValueError('Narrativa ou proveniência não confere com registros verificados')
                 self.writer.export_entry(entry)
                 folder = self.writer.directory(entry['world'])
                 paths = [folder / 'README.md', folder / (f"day_{entry['day']:03d}.md" if entry['kind'] == 'daily' else

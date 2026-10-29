@@ -1,7 +1,9 @@
 # MineLife AI
 
 Trabalhe neste diretório. Preserve código existente e alterações do usuário.
-Java 21, Minecraft 1.21.1, Yarn 1.21.1+build.3, Fabric; Python 3.11.
+Java 21, Minecraft 1.21.1, Yarn 1.21.1+build.3, Fabric; Python 3.11. Mod 0.2 usa
+bridge HTTP/1.1 em loopback; não reintroduza Upgrade/WebSocket sem mudar cliente,
+servidor e testes de contrato em conjunto.
 Não altere autenticação, launcher ou saves diretamente. Antes de instalar arquivos
 do mod ou testar ações reais, feche Minecraft e execute scripts/Install-Mod.ps1,
 que verifica caminhos e cria backup do mundo e dos arquivos substituídos.
@@ -17,3 +19,6 @@ Diários exigem teste real e autorização específica; exposição pública exi
 journal_allow_public=true na configuração local. Nunca publique memórias privadas.
 Não versionar data/, tokens, saves, config/local.json ou caminhos pessoais.
 Execute .venv/Scripts/python.exe -m unittest discover -s tests -v e mod/gradlew.bat build.
+Migrações devem criar backup, ser aditivas e comparar fingerprints de memória real.
+Reflexões e sugestões LLM são narrativas, não fatos; publique diário somente após
+validar a proveniência de cada frase. LLM nunca emite comandos físicos.

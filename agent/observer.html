@@ -2,20 +2,32 @@
 <html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>MineLife AI — Life Observer</title>
 <style>body{font:16px system-ui;max-width:1100px;margin:30px auto;padding:0 18px;background:#12201c;color:#e4eee8}section{background:#1d3028;padding:18px;margin:16px 0;border-radius:8px}pre{white-space:pre-wrap;overflow-wrap:anywhere}button,input{padding:10px;margin:4px}h1{color:#b1eabf}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}</style>
-<h1>MineLife AI · Life Observer</h1>
+<h1>MineLife AI 0.2 · Life Observer</h1>
 <p>Personalidade simulada. Descobertas exigem evidências. Publicação automática desligada.</p>
 <label>Token local <input id="token" type="password" autocomplete="off"></label><button id="connect">Conectar painel</button>
 <p id="connection">Aguardando conexão.</p>
+<section><h2 id="activity">PAUSED</h2><p id="reason"></p><p id="motivation"></p></section>
 <div><button data-action="start">Iniciar</button><button data-action="pause">Pausar</button><button data-action="resume">Retomar</button><button data-action="stop">Parar</button></div>
 <p>F8 autoriza/desativa no jogo · F9 pausa/retoma · F10 emergência.</p>
 <div class="grid"><section><h2>Estado</h2><pre id="status"></pre></section><section><h2>Objetivos</h2><pre id="goals"></pre></section><section><h2>Perguntas e hipóteses</h2><pre id="questions"></pre></section><section><h2>Experimentos</h2><pre id="experiments"></pre></section><section><h2>Descobertas</h2><pre id="knowledge"></pre></section><section><h2>Sincronização GitHub</h2><pre id="sync"></pre></section></div>
+<div class="grid">
+<section><h2>Interesses e motivações</h2><pre id="interests"></pre></section>
+<section><h2>Personalidade</h2><pre id="personality"></pre></section>
+<section><h2>Exploração · regiões visitadas</h2><canvas id="map" width="360" height="220" aria-label="Mapa das regiões observadas"></canvas><pre id="regions"></pre></section>
+<section><h2>Reflexões verificáveis</h2><pre id="reflections"></pre></section>
+<section><h2>Habilidades executáveis</h2><pre id="skills"></pre></section>
+<section><h2>Modelo de linguagem</h2><p>Sugestões do modelo não são descobertas nem fatos verificados.</p><pre id="llm"></pre></section>
+<section><h2>Construção, economia e sociedade</h2><p>Execução autônoma destes sistemas ainda não implementada. Crafting 2×2 não significa construção de estruturas, comércio ou relacionamentos.</p></section>
+</div>
 <section><h2>Life Journal</h2><div id="journal"></div></section>
+<section><h2>Mente do MineLife</h2><p>Registros estruturados do software; sugestões do modelo permanecem sem verificação.</p><pre id="mind"></pre></section>
 <script>
 let token='',busy=false;
 const put=(id,text)=>document.getElementById(id).textContent=text;
 async function api(path,method='GET'){const r=await fetch(path,{method,headers:{Authorization:'Bearer '+token}});const b=await r.json();if(!r.ok)throw Error(b.detail||r.status);return b;}
 document.getElementById('connect').onclick=()=>{token=document.getElementById('token').value;refresh();};
 document.querySelectorAll('[data-action]').forEach(b=>b.onclick=async()=>{try{await api('/api/control/'+b.dataset.action,'POST');await refresh();}catch(e){put('connection',e.message);}});
-async function refresh(){if(!token||busy)return;busy=true;try{const s=await api('/api/state');put('connection',s.connected?'Minecraft conectado':'Aguardando Minecraft / conexão interrompida');const o=s.observation;put('status',o?JSON.stringify({dia:o.day,hora:o.time,ativo:o.active,vida:o.player.health,fome:o.player.food,posicao:[o.player.x,o.player.y,o.player.z]},null,2):'Nenhum mundo observado');for(const [id,key] of [['goals','Goals'],['questions','Hypotheses'],['experiments','Experiments'],['knowledge','Knowledge']])put(id,JSON.stringify(s[key],null,2));put('sync','Automático: DESLIGADO\n'+JSON.stringify(s.PublicationQueue,null,2));const j=document.getElementById('journal');j.replaceChildren();for(const e of s.JournalEntries){const p=document.createElement('pre');p.textContent='Dia '+e.day+' · '+e.kind+'\n'+e.text;j.append(p);}}catch(e){put('connection',e.message);}finally{busy=false;}}
+function map(s){const c=document.getElementById('map'),ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);const regions=(s.SpatialRegions||[]).filter(r=>r.dimension===s.observation?.dimension);if(!regions.length)return;const xs=regions.map(r=>r.rx),zs=regions.map(r=>r.rz),xmin=Math.min(...xs),zmin=Math.min(...zs);const scale=Math.min(20,320/(Math.max(...xs)-xmin+1),180/(Math.max(...zs)-zmin+1));for(const r of regions){ctx.fillStyle='#81c799';ctx.fillRect(15+(r.rx-xmin)*scale,15+(r.rz-zmin)*scale,Math.max(3,scale-2),Math.max(3,scale-2));}const p=s.observation.player;ctx.fillStyle='#ffd46a';ctx.beginPath();ctx.arc(15+(Math.floor(p.x/8)-xmin)*scale,15+(Math.floor(p.z/8)-zmin)*scale,4,0,Math.PI*2);ctx.fill();}
+async function refresh(){if(!token||busy)return;busy=true;try{const s=await api('/api/state');put('connection',s.connected?'Minecraft conectado · observações recebidas':'Aguardando Minecraft / conexão interrompida');put('activity',s.state);put('reason',s.reason);put('motivation','Motivação predominante: '+s.motivation+' · ciclos de planejamento: '+s.planning_cycles);const o=s.observation;put('status',o?JSON.stringify({dia:o.day,hora:o.time,ativo:o.active,vida:o.player.health,fome:o.player.food,bioma:o.biome,posicao:[o.player.x,o.player.y,o.player.z],inventario:o.player.inventory,receitas:o.recipes},null,2):'Nenhum mundo observado');for(const [id,key] of [['goals','Goals'],['experiments','Experiments'],['knowledge','Knowledge'],['regions','SpatialRegions'],['reflections','Reflections'],['skills','skills'],['llm','llm']])put(id,JSON.stringify(s[key],null,2));put('questions',JSON.stringify({perguntas:s.Questions,hipoteses:s.Hypotheses,questoesFilosoficas:s.PhilosophicalQuestions},null,2));put('mind',JSON.stringify({OBSERVACAO:o,INTERPRETACAO:s.PhilosophicalRevisions,PERGUNTA:s.PhilosophicalQuestions,HIPOTESE:s.Hypotheses,DECISAO:s.Goals,REFLEXAO:s.Reflections,MEMORIA_RECUPERADA:s.LifeMemories,SUGESTOES_NAO_VERIFICADAS:s.CognitiveSuggestions},null,2));put('interests',JSON.stringify({interesses:s.Interests,motivacoes:s.Motivations},null,2));put('personality',JSON.stringify({atributos:s.personality,mudancas:s.PersonalityChanges},null,2));put('sync','Automático: DESLIGADO\n'+JSON.stringify(s.PublicationQueue,null,2));map(s);const j=document.getElementById('journal');j.replaceChildren();for(const e of s.JournalEntries){const p=document.createElement('pre');p.textContent='Dia '+e.day+' · '+e.kind+'\n'+e.text;j.append(p);}}catch(e){put('connection',e.message);}finally{busy=false;}}
 setInterval(refresh,1500);
 </script></html>

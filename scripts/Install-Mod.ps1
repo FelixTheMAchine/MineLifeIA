@@ -8,7 +8,7 @@ $savePath = (Resolve-Path -LiteralPath (Join-Path $gameRoot "saves\$World")).Pat
 if (-not $savePath.StartsWith($gameRoot.TrimEnd('\') + '\saves\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Save fora do diretorio esperado' }
 if (-not (Test-Path -LiteralPath (Join-Path $savePath 'level.dat'))) { throw 'Save Minecraft nao confirmado' }
 if (Get-Process -Name java,javaw -ErrorAction SilentlyContinue) { throw 'Feche Minecraft e processos Java antes do backup/instalacao (incluindo Gradle daemon: mod\gradlew.bat --stop).' }
-$jar = Join-Path $projectRoot 'mod\build\libs\minelife-ai-0.1.0.jar'
+$jar = Join-Path $projectRoot 'mod\build\libs\minelife-ai-0.2.0.jar'
 if (-not (Test-Path -LiteralPath $jar)) { throw 'Compile o mod antes de instalar' }
 $mods = Join-Path $gameRoot 'mods'
 if (-not (Test-Path -LiteralPath $mods)) { throw 'Pasta mods nao encontrada' }
@@ -34,7 +34,10 @@ foreach ($file in $existing) {
     if (-not $file.FullName.StartsWith($mods.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Mod fora do diretorio esperado' }
     Move-Item -LiteralPath $file.FullName -Destination (Join-Path $backupRoot $file.Name)
 }
-Copy-Item -LiteralPath (Join-Path $projectRoot 'config\local.json') -Destination $modConfig
-Copy-Item -LiteralPath $jar -Destination (Join-Path $mods 'minelife-ai-0.1.0.jar')
+$backendConfig = Get-Content -LiteralPath (Join-Path $projectRoot 'config\local.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+# O mod recebe apenas seu token; configuracoes de provedores ficam no backend.
+$minimalConfig = @{ token = $backendConfig.token } | ConvertTo-Json
+[System.IO.File]::WriteAllText($modConfig, $minimalConfig, (New-Object System.Text.UTF8Encoding $false))
+Copy-Item -LiteralPath $jar -Destination (Join-Path $mods 'minelife-ai-0.2.0.jar')
 Write-Host "Mod instalado. Backup verificado em: $backupRoot"
 Write-Host 'Abra Fabric 1.21.1, carregue ia em Survival e pressione F8 apos iniciar o backend.'

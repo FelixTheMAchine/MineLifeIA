@@ -42,13 +42,22 @@ public final class MineLifeClient implements ClientModInitializer {
     private static final Logger LOG = LoggerFactory.getLogger("minelife_ai");
     private static final Gson JSON = new Gson();
     private final MinecraftClient mc = MinecraftClient.getInstance();
-    private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofMillis(800)).build();
+    private final HttpClient http = HttpClient.newBuilder()
+    .version(HttpClient.Version.HTTP_1_1)
+    .connectTimeout(Duration.ofMillis(800))
+    .build();
     private final List<JsonObject> results = new ArrayList<>();
-    private final Set<String> seenCommands = new HashSet<>();
+    private final Set<String> seenCommands = new LinkedHashSet<>();
     private KeyBinding toggle, pause, emergency;
     private Navigator navigator;
     private String token, session, world, dimension;
     private boolean active, armed;
+    private final ControlGate gate = new ControlGate();
+    private boolean handshaken, handshakeRequest;
+    private int failures;
+    private long nextPoll, sensorTick = -100;
+    private JsonArray cachedBlocks = new JsonArray(), cachedFrontiers = new JsonArray(), cachedRecipes = new JsonArray();
+    private CraftingController crafting;
     private String status = "Desativada · F8";
     private long seq, ticks, lastReply, lastPoll;
     private CompletableFuture<HttpResponse<String>> request;
@@ -62,6 +71,7 @@ public final class MineLifeClient implements ClientModInitializer {
 
     @Override public void onInitializeClient() {
         navigator = new Navigator(mc);
+        crafting = new CraftingController(mc);
         toggle = key("Ativar/desativar MineLife AI", GLFW.GLFW_KEY_F8);
         pause = key("Pausar/retomar MineLife AI", GLFW.GLFW_KEY_F9);
         emergency = key("Emergencia MineLife AI", GLFW.GLFW_KEY_F10);
@@ -97,29 +107,38 @@ public final class MineLifeClient implements ClientModInitializer {
                 dimension = currentDimension;
             } catch (Exception e) { status = "Nao foi possivel identificar o mundo"; return; }
         }
-        while (emergency.wasPressed()) stop("Emergencia · F8 para rearmar", true);
-        while (toggle.wasPressed()) {
-            if (active || armed) stop("Desativada · F8", true);
-            else if (canStart()) { armed = true; active = true; status = "Observando"; }
-        }
-        while (pause.wasPressed()) {
-            if (active) stop("Pausada · F9", false);
-            else if (armed && canStart()) { active = true; status = "Observando"; }
+        if (emergency.wasPressed()) {
+            handleKey(10);
+            while(toggle.wasPressed()) { }
+            while(pause.wasPressed()) { }
+        } else {
+            while (toggle.wasPressed()) handleKey(8);
+            while (pause.wasPressed()) handleKey(9);
         }
         if (request != null && request.isDone()) receive();
         long now = System.nanoTime();
-        if (active && (now - lastReply > 1_500_000_000L || dangerous() || mc.currentScreen != null || !mc.isWindowFocused())) {
+        if (active && (gate.heartbeatExpired(now,lastReply) || dangerous() || (mc.currentScreen != null && !crafting.ownsScreen()) || !mc.isWindowFocused())) {
             stop("Pausa de seguranca · F8", true);
         }
         if (active && command != null) {
             try { executeCommand(); }
             catch (Exception e) { stop("Falha na acao · F8", true); LOG.warn("MineLife: acao interrompida sem evidencia conclusiva."); }
         }
-        if (token != null && request == null && now - lastPoll >= 250_000_000L) poll();
+        if (token != null && request == null && now >= nextPoll && now - lastPoll >= 250_000_000L) poll();
+    }
+
+    private void handleKey(int key) {
+        gate.active = active; gate.armed = armed;
+        gate.key(key, key != 10 && canStart());
+        if (!gate.active) {
+            String state = gate.state;
+            stop(state.equals("EMERGENCY_STOP") ? "Emergencia · F8" : "Pausada/desativada", !gate.armed);
+            gate.state = state;
+        } else { active = true; armed = true; status = "Observando"; }
     }
 
     private boolean canStart() {
-        if (token == null || System.nanoTime() - lastReply > 1_500_000_000L) { status = "Backend desconectado"; return false; }
+        if (token == null || !handshaken || gate.heartbeatExpired(System.nanoTime(),lastReply)) { status = "Backend desconectado"; return false; }
         if (mc.interactionManager == null || mc.interactionManager.getCurrentGameMode() != GameMode.SURVIVAL) {
             status = "Requer Survival"; return false;
         }
@@ -137,6 +156,7 @@ public final class MineLifeClient implements ClientModInitializer {
     private void resetSession() {
         if (request != null) request.cancel(true);
         request = null; session = UUID.randomUUID().toString(); seq = 0; results.clear(); seenCommands.clear(); lastReply = 0;
+        handshaken = false; sensorTick = -100; nextPoll = 0;
     }
 
     private void stop(String why, boolean disarm) {
@@ -148,13 +168,24 @@ public final class MineLifeClient implements ClientModInitializer {
             if (mc.player != null) { mc.player.setSprinting(false); mc.player.input.movementForward = 0; mc.player.input.movementSideways = 0; mc.player.input.jumping = false; }
         }
         active = false; if (disarm) armed = false; status = why;
+        gate.stop("PAUSED", disarm);
+        if (crafting != null) crafting.cancel();
     }
 
     private void poll() {
         lastPoll = System.nanoTime();
+        if (!handshaken) {
+            handshakeRequest = true;
+            HttpRequest req = HttpRequest.newBuilder(URI.create("http://127.0.0.1:8765/bridge/handshake"))
+                .version(HttpClient.Version.HTTP_1_1).timeout(Duration.ofMillis(1800))
+                .header("Authorization", "Bearer " + token).GET().build();
+            request = http.sendAsync(req, HttpResponse.BodyHandlers.ofString());
+            return;
+        }
+        handshakeRequest = false;
         JsonObject body = observation();
         HttpRequest req = HttpRequest.newBuilder(URI.create("http://127.0.0.1:8765/bridge/step"))
-            .timeout(Duration.ofMillis(1000)).header("Content-Type", "application/json")
+            .version(HttpClient.Version.HTTP_1_1).timeout(Duration.ofMillis(1800)).header("Content-Type", "application/json")
             .header("Authorization", "Bearer " + token).POST(HttpRequest.BodyPublishers.ofString(JSON.toJson(body))).build();
         request = http.sendAsync(req, HttpResponse.BodyHandlers.ofString());
     }
@@ -162,24 +193,35 @@ public final class MineLifeClient implements ClientModInitializer {
     private void receive() {
         try {
             HttpResponse<String> response = request.join(); request = null;
-            if (response.statusCode() != 200 || response.body().length() > 65536) throw new IllegalStateException("bridge_error");
+            if (response.statusCode() != 200 || response.body().length() > 65536) throw new IllegalStateException("HTTP_"+response.statusCode());
             JsonObject reply = JsonParser.parseString(response.body()).getAsJsonObject();
+            if (handshakeRequest) {
+                if (reply.get("protocol").getAsInt()!=1 || !reply.get("transport").getAsString().equals("HTTP/1.1")) throw new IllegalStateException("protocol_mismatch");
+                handshaken = true; lastReply = System.nanoTime(); failures = 0; return;
+            }
             if (!reply.get("session").getAsString().equals(session) || reply.get("seq").getAsLong() != seq) throw new IllegalStateException("stale_reply");
             lastReply = System.nanoTime();
+            failures = 0;
             for (JsonElement ack : reply.getAsJsonArray("ack")) results.removeIf(r -> r.get("id").getAsString().equals(ack.getAsString()));
+            if (reply.has("control_epoch") && reply.get("control_epoch").getAsLong()!=gate.epoch) return;
             if (!reply.get("control").isJsonNull()) {
                 switch (reply.get("control").getAsString()) {
                     case "stop" -> stop("Parada pelo painel · F8", true);
                     case "pause" -> stop("Pausada · F9", false);
-                    case "start", "resume" -> { if (armed && canStart()) { active = true; status = "Observando"; } }
+                    case "start", "resume" -> { if (armed && canStart()) { gate.enable(); active = true; status = "Observando"; } }
                 }
             }
             if (active && command == null && !reply.get("command").isJsonNull()) begin(reply.getAsJsonObject("command"));
+            if (active && command == null && reply.has("state")) status = reply.get("state").getAsString();
         } catch (Exception e) {
             request = null;
             stop("Backend desconectado · F8", true);
             // A nova sessão impede que comandos antigos sejam reutilizados após reconexão.
             session = UUID.randomUUID().toString(); seq = 0; seenCommands.clear(); results.clear(); lastReply = 0;
+            handshaken = false; gate.state = "DISCONNECTED";
+            failures++;
+            nextPoll = System.nanoTime() + Math.min(4000, 500L * failures) * 1_000_000L;
+            if (failures == 1 || failures % 10 == 0) LOG.warn("MineLife bridge failure {}: {}", failures, e.getClass().getSimpleName() + ":" + (e instanceof IllegalStateException ? e.getMessage() : "network_or_message_error"));
         }
     }
 
@@ -190,10 +232,23 @@ public final class MineLifeClient implements ClientModInitializer {
         o.addProperty("day", Math.max(1, mc.world.getTimeOfDay() / 24000 + 1));
         o.addProperty("time", Math.floorMod(mc.world.getTimeOfDay(), 24000));
         o.addProperty("active", active); o.addProperty("armed", armed);
+        o.addProperty("control_state", gate.state); o.addProperty("control_epoch", gate.epoch);
+        o.add("capabilities", JSON.toJsonTree(List.of("approach","break","collect","observe","explore","craft")));
+        o.addProperty("biome", mc.world.getBiome(mc.player.getBlockPos()).getKey().map(k -> k.getValue().toString()).orElse("unknown"));
+        o.add("entities", new JsonArray());
         JsonObject player = new JsonObject();
         player.addProperty("x", mc.player.getX()); player.addProperty("y", mc.player.getY()); player.addProperty("z", mc.player.getZ());
         player.addProperty("health", mc.player.getHealth()); player.addProperty("food", mc.player.getHungerManager().getFoodLevel());
         player.addProperty("danger", dangerous()); player.add("inventory", inventory(mc.player.getInventory())); o.add("player", player);
+        if (ticks-sensorTick >= 20) { scanSensors(); sensorTick = ticks; }
+        o.add("recipes", cachedRecipes);
+        o.add("blocks", cachedBlocks); o.add("frontiers", cachedFrontiers); o.add("results", JSON.toJsonTree(results));
+        o.add("running", command == null ? JsonNull.INSTANCE : command.get("id"));
+        return o;
+    }
+
+    private void scanSensors() {
+        cachedRecipes = crafting.offers();
         JsonArray blocks = new JsonArray();
         // Scan local limitado; troncos naturais com folhas próximas, até 64 candidatos.
         BlockPos origin = mc.player.getBlockPos();
@@ -202,6 +257,8 @@ public final class MineLifeClient implements ClientModInitializer {
             if (!mc.world.isChunkLoaded(p)) continue;
             var state = mc.world.getBlockState(p);
             if (!state.isIn(BlockTags.LOGS)) continue;
+            var sight=mc.world.raycast(new RaycastContext(mc.player.getEyePos(),Vec3d.ofCenter(p),RaycastContext.ShapeType.OUTLINE,RaycastContext.FluidHandling.NONE,mc.player));
+            if(sight.getType()!=HitResult.Type.BLOCK || !sight.getBlockPos().equals(p)) continue;
             String id = Registries.BLOCK.getId(state.getBlock()).toString();
             if (!id.endsWith("_log") || id.contains("stripped")) continue;
             boolean leaves = false;
@@ -212,23 +269,46 @@ public final class MineLifeClient implements ClientModInitializer {
             JsonObject b = position(p); b.addProperty("id", id); b.addProperty("log", true); blocks.add(b);
             if (++count >= 64) break;
         }
-        o.add("blocks", blocks); o.add("results", JSON.toJsonTree(results));
-        o.add("running", command == null ? JsonNull.INSTANCE : command.get("id"));
-        return o;
+        Set<String> observed = new HashSet<>();
+        for (BlockPos p : BlockPos.iterate(origin.add(-3,-1,-3),origin.add(3,2,3))) {
+            var block = mc.world.getBlockState(p);
+            String id = Registries.BLOCK.getId(block.getBlock()).toString();
+            if (block.isAir() || block.isIn(BlockTags.LOGS) || observed.contains(id) || !navigator.visibleFrom(mc.player.getEyePos(),p)) continue;
+            observed.add(id); JsonObject b = position(p); b.addProperty("id",id); b.addProperty("log",false); blocks.add(b);
+            if (observed.size()>=16) break;
+        }
+        cachedBlocks = blocks;
+        cachedFrontiers = new JsonArray();
+        if (active && command == null && mc.currentScreen==null) for (BlockPos p : navigator.frontiers()) {
+            JsonObject f=position(p); f.addProperty("safe",true); f.addProperty("path_length",Math.max(1,mc.player.getBlockPos().getManhattanDistance(p))); cachedFrontiers.add(f);
+        }
     }
 
     private void begin(JsonObject c) {
         String id = c.get("id").getAsString(); UUID.fromString(id);
         if (seenCommands.contains(id)) return;
         seenCommands.add(id);
-        if (seenCommands.size() > 10000) { stop("Limite da sessao · F8", true); return; }
+        if (seenCommands.size() > 4096) seenCommands.remove(seenCommands.iterator().next());
         String action = c.get("action").getAsString();
-        if (!Set.of("approach", "break", "collect").contains(action)) return;
+        if (!Set.of("approach", "break", "collect", "explore", "observe", "craft").contains(action)) return;
         JsonObject p = c.getAsJsonObject("target");
         target = new BlockPos(p.get("x").getAsInt(), p.get("y").getAsInt(), p.get("z").getAsInt());
         command = c.deepCopy(); commandStart = System.nanoTime(); attacked = false; airTicks = 0; after = null; baseline = null;
         if (target.getSquaredDistance(mc.player.getBlockPos()) > 20 * 20) { finish("failed", "out_of_local_range", new JsonObject()); return; }
         originalBlock = Registries.BLOCK.get(net.minecraft.util.Identifier.of(p.get("id").getAsString()));
+        if (action.equals("craft")) {
+            navigator.release();
+            String error = crafting.begin(c.getAsJsonObject("recipe"));
+            if (error != null) finish("failed",error,new JsonObject());
+            else status = "Crafting 2x2";
+            return;
+        }
+        if (action.equals("observe")) { after=authoritative(); return; }
+        if (action.equals("explore")) {
+            status="Explorando fronteira";
+            if (!navigator.plan(target,false,true)) finish("failed","no_safe_path",new JsonObject());
+            return;
+        }
         status = switch (action) { case "approach" -> "Aproximando do tronco"; case "break" -> "Investigando tronco"; default -> "Verificando coleta"; };
         if (action.equals("break")) baseline = authoritative();
         else if (!navigator.plan(target, action.equals("collect"))) finish("failed", "no_safe_path", new JsonObject());
@@ -238,6 +318,25 @@ public final class MineLifeClient implements ClientModInitializer {
         int timeout = Math.min(20000, Math.max(500, command.get("timeout_ms").getAsInt()));
         if (System.nanoTime() - commandStart > timeout * 1_000_000L) { finish("failed", "timeout", new JsonObject()); return; }
         String action = command.get("action").getAsString();
+        if (action.equals("craft")) {
+            JsonObject outcome=crafting.tick();
+            if (outcome != null) finish(outcome.has("error")?"failed":"success",outcome.has("error")?outcome.get("error").getAsString():"server_confirmed_craft",outcome);
+            return;
+        }
+        if (action.equals("observe")) {
+            if (!navigator.visibleFrom(mc.player.getEyePos(),target)) {finish("failed","not_visible",new JsonObject());return;}
+            if (after.isDone()) finish("success","server_observation",after.join());
+            return;
+        }
+        if (action.equals("explore")) {
+            int state=navigator.tick();
+            if (state<0) {finish("failed","path_obstructed",new JsonObject());return;}
+            if (state>0) {
+                if (after==null) after=authoritative();
+                if(after.isDone()) finish("success","server_position",after.join());
+            }
+            return;
+        }
         if (action.equals("approach")) {
             int state = navigator.tick();
             if (state < 0) finish("failed", "path_obstructed", new JsonObject());
@@ -309,6 +408,8 @@ public final class MineLifeClient implements ClientModInitializer {
                 var serverWorld = server.getWorld(dimensionKey);
                 if (player == null || serverWorld == null) throw new IllegalStateException("no_player");
                 JsonObject ev = new JsonObject(); ev.addProperty("server_verified", true);
+                JsonObject pos=new JsonObject(); pos.addProperty("x",player.getX());pos.addProperty("y",player.getY());pos.addProperty("z",player.getZ());
+                ev.add("position",pos); ev.addProperty("dimension",player.getWorld().getRegistryKey().getValue().toString());
                 ev.addProperty("after_block", Registries.BLOCK.getId(serverWorld.getBlockState(captured).getBlock()).toString());
                 ev.add("inventory_after", inventory(player.getInventory()));
                 ev.addProperty("mined", player.getStatHandler().getStat(Stats.MINED.getOrCreateStat(capturedBlock)));
@@ -338,11 +439,12 @@ public final class MineLifeClient implements ClientModInitializer {
         mc.options.attackKey.setPressed(false);
         mc.options.useKey.setPressed(false);
         if (mc.interactionManager != null) mc.interactionManager.cancelBlockBreaking();
+        crafting.cancel();
         evidence.add("target", position(target));
         JsonObject r = new JsonObject(); r.add("id", command.get("id")); r.addProperty("status", outcome);
         r.addProperty("reason", reason); r.add("evidence", evidence); results.add(r);
         LOG.info("MineLife action={} status={} reason={}", command.get("action").getAsString(), outcome, reason);
-        command = null; status = active ? "Observando" : status;
+        command = null; sensorTick = -100; status = active ? "Observando" : status;
         if (results.size() > 60) stop("Fila cheia · F8", true);
     }
 }

@@ -1,19 +1,31 @@
 # Roadmap
 
-1. **Primeiro ciclo real:** mod compilado e backend implementado; validar no mundo
-   ia com backup, confirmar movimento, quebra, coleta e F10/desconexão.
-2. **Memória e diário:** implementados e testados com fixtures; validar com dados
-   reais, virada do dia e reinício; primeiro dry-run de diário real antes de publicar.
-3. **Autonomia ampliada:** exploração de fronteiras seguras, retomada de planos,
-   alternativas após falhas, planejamento hierárquico e personalidade adaptativa.
-4. **Sobrevivência:** alimentos, ferramentas, crafting real, abrigo, combate/fuga.
-5. **Construção/agricultura:** blueprints, materiais, colocação por etapas e checagem.
-6. **Economia:** estoques, escassez e comércio pelas interfaces reais.
-7. **MCA:** inspecionar APIs e telas da versão instalada antes de automatizar
-   conversa, amizade e família. Nesta etapa apenas metadados/classes do JAR foram
-   inspecionados; não existe integração social funcional.
-8. **Vila e comunidade:** infraestrutura e expansão gradual depois das etapas anteriores.
+O status diferencia implementação, validação automatizada e observação no jogo. Não há marco de dias fixo; objetivos futuros surgem apenas quando o contexto e as habilidades suportam ações.
 
-Não declarar as fases avançadas concluídas por existirem nomes de classes ou
-textos no painel. LLM opcional é trabalho futuro, com limites, falhas controladas
-e uma camada que impeça publicação de fatos sem evidência.
+## Em uso e coberto por testes locais
+
+- Controle do personagem local no integrado, autorização F8/F9/F10, pausa segura, handshake HTTP/1.1 autenticado e recuperação de desconexão.
+- Percepção local, observação de blocos visíveis, aproximação/mineração de troncos, prova de remoção/coleta, navegação segura em região local e crafting de receitas desbloqueadas 2×2 para tábuas, gravetos e bancada.
+- Cognição em ciclos limitados, objetivos por mundo, cooldowns, limites de repetição, oportunidades derivadas, exploração por fronteiras anunciadas e estado explícito de espera.
+- SQLite migrável com backup, personalidade/interesses que alteram prioridades e margem de segurança, memórias episódicas salientes, recuperação lexical e reflexões contextuais ligadas à evidência.
+- Diário narrativo por eventos com manifest de proveniência, lembranças anteriores e interpretações provisórias. Rascunhos de LLM são persistidos como não verificados e nunca entram no conhecimento factual ou no diário publicável.
+- Life Observer com mente estruturada e rascunhos rotulados. Publicador de diário para o repositório oficial, mas envio automático/publicação de diário permanecem desativados.
+
+## Necessita validação no Minecraft desta versão
+
+- Movimento 0.2, parada em perda de conexão, sensor de blocos, coleta, exploração local, estado prolongado da autonomia e crafting real na tela 2×2.
+- Persistência ao reiniciar backend depois da migração do banco legado, integração de tela com o perfil MCA instalado e funcionamento em terrenos/situações reais.
+
+Um teste anterior do MVP 0.1 confirmou quebra e coleta de um tronco de bétula e diário persistente. Esse resultado não valida alterações recentes no navegador, protocolo, crafting, filosofia ou escrita narrativa.
+
+## Próximas capacidades, depois de validar a base
+
+1. Sobrevivência noturna segura: comida, cama/abrigo, rota de retirada e interrupção de perigo sem congelamento indefinido.
+2. Inventário e crafting 3×3 por bancada, fornalhas, ferramentas, armadura e uso de itens com provas de consumo/resultado.
+3. Navegação por rotas maiores, memória de retorno, caminhos alternativos e recuperação de terreno; sem assumir que uma fronteira local seja segura para viajar longas distâncias.
+4. Projetos físicos de construção com cálculo de materiais, posicionamento nativo de blocos e inspeção/correção.
+5. Agricultura e mecanismos com verificação física; então estoques e economia de trocas reais.
+6. Inspecionar API e interfaces de MCA Reborn 7.7.19 no ambiente instalado; implementar memória social, interação, relacionamentos e família somente sobre interfaces reais validadas.
+7. Projetos comunitários e vila, dependentes de construção, sobrevivência, armazenagem e integração social já comprovadas.
+
+Nenhuma etapa de combate, construção física, fazendas, comércio, integração social, casamento, família, vila ou sobrevivência prolongada deve ser marcada como feita até que exista executor real, evidência observável e validação apropriada.
