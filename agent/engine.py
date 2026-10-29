@@ -10,6 +10,7 @@ from agent.skills import SkillRegistry
 from agent.exploration import ExplorationManager, region
 from agent.autobiography import Autobiography
 from agent.philosophy import PhilosophicalReflectionEngine
+from agent.food import FoodAcquisitionManager
 
 
 def valid_inventory(value):
@@ -24,6 +25,7 @@ class CognitiveEngine:
         self.interval = max(.5, min(10, settings.get('decision_interval', 2.0)))
         self.goals = GoalManager(memory, max(1, min(32, settings.get('max_active_goals', 8))))
         self.skills, self.interests = SkillRegistry(), InterestManager(memory)
+        self.foods = FoodAcquisitionManager()
         self.motivation, self.exploration = MotivationEngine(memory), ExplorationManager(memory)
         self.autobiography = Autobiography(memory)
         self.philosophy = PhilosophicalReflectionEngine(memory, self.autobiography)
@@ -60,7 +62,8 @@ class CognitiveEngine:
                     {'approach': 'Aproximando de um alvo observado', 'break': 'Testando quebra de tronco',
                      'collect': 'Verificando coleta', 'observe': 'Verificando um bloco',
                      'craft': 'Testando receita desbloqueada na grade 2×2', 'explore': 'Avançando para fronteira local validada',
-                     'eat': 'Recuperando a fome com alimento disponível'}[action])
+                     'eat': 'Recuperando a fome com alimento disponível', 'pickup': 'Recolhendo um item observado',
+                     'harvest': 'Colhendo cultivo maduro observado'}[action])
         return payload
 
     def _knowledge(self, s, subject, status, eid):
@@ -141,7 +144,7 @@ class CognitiveEngine:
         kind = plans[0]['kind'] if plans else 'log'
         if action == 'approach':
             valid &= ev.get('in_reach') is True
-            phase = 'observe' if kind == 'observe' else 'break'
+            phase = 'observe' if kind == 'observe' else 'harvest' if kind == 'harvest' else 'break'
         elif action == 'break':
             valid &= (ev.get('server_verified') is True and ev.get('before_block') == target['id'] and
                       ev.get('after_block') == 'minecraft:air' and type(ev.get('mined_delta')) is int and ev['mined_delta'] >= 1 and
@@ -151,6 +154,14 @@ class CognitiveEngine:
                 eid = self._event(s, 'block_removed', f"Consegui quebrar {subject}. O servidor confirmou a remoção; ainda preciso verificar a coleta.", ev, cmd['id'])
                 self._knowledge(s, subject, 'partial', eid)
                 self.journal.write(s.world, s.day, 'reflection', eid)
+        elif action == 'harvest':
+            valid &= (ev.get('server_verified') is True and ev.get('before_block') == target['id']
+                      and ev.get('after_block') == 'minecraft:air'
+                      and ev.get('before_crop_mature') is True
+                      and type(ev.get('mined_delta')) is int and ev['mined_delta'] >= 1)
+            if valid:
+                eid = self._event(s, 'crop_harvested', f'Retirei o bloco maduro {subject}. A remoção foi confirmada pelo servidor; ainda não confirmei os itens que possam ter caído.', ev, cmd['id'])
+                self._knowledge(s, 'harvest:' + subject, 'confirmed', eid)
         elif action == 'collect':
             before = cmd.get('baseline', 0)
             inventory = ev.get('inventory_after', {})
@@ -198,6 +209,21 @@ class CognitiveEngine:
             if valid:
                 subject = 'food:' + target['id']
                 eid = self._event(s, 'ate', f'Comi uma unidade de {target["id"]}; o servidor confirmou aumento da fome de {food_before} para {food_after} e redução do inventário.', ev, cmd['id'])
+                self._knowledge(s, subject, 'confirmed', eid)
+        elif action == 'pickup':
+            item = cmd['item']; before, after = ev.get('inventory_before', {}), ev.get('inventory_after', {})
+            item_id = item['item_id']; old_count = before.get(item_id, 0) if isinstance(before, dict) else -1
+            new_count = after.get(item_id, 0) if isinstance(after, dict) else -1
+            present_after = ev.get('entity_present_after')
+            count_before, count_after = ev.get('entity_count_before'), ev.get('entity_count_after')
+            entity_changed = (ev.get('entity_present_before') is True and
+                              ((present_after is False) or (type(count_before) is int and type(count_after) is int and count_after < count_before)))
+            valid &= (ev.get('server_verified') is True and valid_inventory(before) and valid_inventory(after)
+                      and ev.get('item_id') == item_id and ev.get('entity_id') == item['entity_id']
+                      and type(old_count) is int and type(new_count) is int and new_count > old_count and entity_changed)
+            if valid:
+                subject = item_id
+                eid = self._event(s, 'collected', f'Recolhi {new_count-old_count} unidade(s) de {item_id}; o inventário e a redução ou remoção da entidade de item foram confirmados pelo servidor.', ev, cmd['id'])
                 self._knowledge(s, subject, 'confirmed', eid)
         else: valid = False
         if not valid:
@@ -299,7 +325,7 @@ class CognitiveEngine:
         self._state(s, 'PLANNING', 'Consultando memória, necessidades e oportunidades')
         self.exploration.record(s)
         known = {r['subject']: r for r in self.m.rows("SELECT * FROM Knowledge WHERE world=? AND status='confirmed'", (s.world,))}
-        candidates = [b for b in s.blocks if (b.id if b.log else 'observation:'+b.id) not in known]
+        candidates = [b for b in s.blocks if b.harvestable or (b.id if b.log else 'observation:'+b.id) not in known]
         frontiers = self.exploration.candidates(s)
         self.dominant, personality = self.motivation.evaluate(s, bool(candidates), len(frontiers))
         self._derive(s, known)
@@ -330,6 +356,23 @@ class CognitiveEngine:
                     self.m.db.execute('INSERT INTO ExperimentGoals VALUES(?,?)', (exp['id'], gid))
                     self.m.db.execute("UPDATE Goals SET status='running' WHERE id=?", (gid,))
                     return self._command(s, exp, 'eat', food=food)
+            food_item = self.foods.choose(s.items, s.player, s.player.inventory,
+                                          self.motivation.safety_limits(s.world)[1])
+            if food_item is not None and 'pickup' in s.capabilities:
+                return self._start_pickup(s, food_item, 1200 + (20-s.player.food)*10,
+                                          'Alimento com componente Food observado no mundo; estoque atual insuficiente.',
+                                          'IMMEDIATE')
+            if s.time < 12000 and 'harvest' in s.capabilities:
+                ripe = sorted((b for b in s.blocks if b.harvestable),
+                              key=lambda b: math.dist((s.player.x,s.player.y,s.player.z),(b.x,b.y,b.z)))
+                for crop in ripe:
+                    if math.dist((s.player.x,s.player.y,s.player.z),(crop.x,crop.y,crop.z)) > 14: continue
+                    target = crop.model_dump(exclude={'log','harvestable'})
+                    if self.m.rows("SELECT 1 FROM Experiments WHERE world=? AND target=? AND status IN ('failed','unverified')",
+                                   (s.world,json.dumps(target,sort_keys=True))): continue
+                    return self._start_harvest(s,crop,1500+(20-s.player.food)*10,
+                                               'Fome baixa, sem alimento seguro no inventário ou no chão; cultivo maduro visível durante o dia.',
+                                               'IMMEDIATE')
             self._state(s, 'WAITING_FOR_SAFE_ACTION', 'Fome baixa; sem alimento seguro executável no inventário')
             return None
         if s.time >= 12000:
@@ -348,6 +391,18 @@ class CognitiveEngine:
             if gid: offered.add(gid)
         for b in sorted(candidates, key=lambda b: math.dist((s.player.x, s.player.y, s.player.z), (b.x, b.y, b.z))):
             if math.dist((s.player.x, s.player.y, s.player.z), (b.x, b.y, b.z)) > 14: continue
+            if b.harvestable:
+                if not self.skills.available('harvest_crop', s.capabilities): continue
+                target = b.model_dump(exclude={'log', 'harvestable'})
+                if self.m.rows("SELECT 1 FROM Experiments WHERE world=? AND target=? AND status IN ('failed','unverified')", (s.world, json.dumps(target, sort_keys=True))): continue
+                subject = f'crop:{b.id}:{b.x}:{b.y}:{b.z}'
+                question = f'Consigo colher o cultivo maduro {b.id} neste local?'
+                gid = self.goals.ensure(s, subject, question, 'Estágio maduro observado em cultivo conhecido; remoção física será confirmada pelo servidor.',
+                                        88 + personality['curiosity']*.04, 'harvest', {'target': target}, 'harvest_crop', 'SHORT_TERM')
+                if gid:
+                    self.goals.question(s, subject, question)
+                    offered.add(gid)
+                continue
             subject = ('log:' if b.log else 'observe:') + b.id
             skill = 'investigate_log' if b.log else 'observe_block'
             if not self.skills.available(skill, s.capabilities): continue
@@ -392,21 +447,71 @@ class CognitiveEngine:
             self.m.db.execute('UPDATE Interests SET goals=? WHERE world=? AND topic=?',
                               (json.dumps([goal['id']]), s.world, self.interests.topic(params['target']['id'])))
             return self._command(s, exp, phase, **({'recipe': params['recipe']} if phase == 'craft' else {}))
+        if 'pickup' in s.capabilities:
+            resource = self.foods.choose_resource(s.items, s.player, s.player.inventory)
+            if resource is not None:
+                pickup_command = self._start_pickup(s, resource, 68 + personality['curiosity']*.08,
+                                                    'Recurso útil observado no chão e em quantidade baixa no inventário.',
+                                                    'SHORT_TERM')
+                if pickup_command is not None:
+                    return pickup_command
         reason = f'Nenhuma novidade executável ou fronteira não visitada com rota segura. Reavaliando a cada {self.interval} s.'
         if 'explore' not in s.capabilities: reason += ' Instale o mod 0.2 para anunciar exploração e crafting.'
         self._state(s, 'WAITING_FOR_SAFE_ACTION', reason)
         return None
 
-    @staticmethod
-    def _safe_food(food, inventory):
+    def _start_pickup(self, s, item, priority, reason, category):
+        data = item.model_dump(mode='json')
+        target = dict(x=math.floor(item.x), y=math.floor(item.y), z=math.floor(item.z), id=item.item_id)
+        subject = 'pickup:' + data['entity_id'] + ':' + str(data['count'])
+        gid = self.goals.ensure(s, subject, 'Recolher ' + item.item_id,
+                                reason, priority, 'pickup', {'target': target, 'item': data},
+                                'pickup_item', category)
+        if not gid:
+            return None
+        goal = next((g for g in self.goals.rows(s.world) if g['id'] == gid and g['status'] == 'pending'), None)
+        if not goal:
+            return None
+        hypothesis = str(uuid4())
+        self.m.db.execute("INSERT OR IGNORE INTO Hypotheses VALUES(?,?,?,?,'hypothesis','[]')",
+                          (hypothesis, s.world, goal['description'],
+                           'A aproximação pode mover o item para meu inventário; a entidade e a contagem serão verificadas.'))
+        hypothesis = self.m.rows('SELECT id FROM Hypotheses WHERE world=? AND question=?',
+                                 (s.world, goal['description']))[0]['id']
+        exp = dict(id=str(uuid4()), world=s.world, session=str(s.session), hypothesis=hypothesis,
+                   target=json.dumps(target, sort_keys=True), phase='pickup', status='running', evidence_ids='[]')
+        self.m.db.execute('INSERT INTO Experiments VALUES(:id,:world,:session,:hypothesis,:target,:phase,:status,:evidence_ids)', exp)
+        self.m.db.execute('INSERT INTO ExperimentGoals VALUES(?,?)', (exp['id'], gid))
+        self.m.db.execute("UPDATE Goals SET status='running' WHERE id=?", (gid,))
+        return self._command(s, exp, 'pickup', item=data)
+
+    def _start_harvest(self, s, crop, priority, reason, category):
+        target=crop.model_dump(exclude={'log','harvestable'})
+        subject=f'crop:{crop.id}:{crop.x}:{crop.y}:{crop.z}'
+        question=f'Consigo colher o cultivo maduro {crop.id} neste local?'
+        gid=self.goals.ensure(s,subject,question,reason,priority,'harvest',{'target':target},'harvest_crop',category)
+        if not gid: return None
+        goal=next((g for g in self.goals.rows(s.world) if g['id']==gid and g['status']=='pending'),None)
+        if not goal: return None
+        hypothesis=str(uuid4())
+        self.m.db.execute("INSERT OR IGNORE INTO Hypotheses VALUES(?,?,?,?,'hypothesis','[]')",
+                          (hypothesis,s.world,question,'A remoção do cultivo maduro pode produzir recursos; o bloco será verificado pelo servidor.'))
+        hypothesis=self.m.rows('SELECT id FROM Hypotheses WHERE world=? AND question=?',(s.world,question))[0]['id']
+        exp=dict(id=str(uuid4()),world=s.world,session=str(s.session),hypothesis=hypothesis,
+                 target=json.dumps(target,sort_keys=True),phase='approach',status='running',evidence_ids='[]')
+        self.m.db.execute('INSERT INTO Experiments VALUES(:id,:world,:session,:hypothesis,:target,:phase,:status,:evidence_ids)',exp)
+        self.m.db.execute('INSERT INTO ExperimentGoals VALUES(?,?)',(exp['id'],gid))
+        self.m.db.execute("UPDATE Goals SET status='running' WHERE id=?",(gid,))
+        return self._command(s,exp,'approach')
+
+    def _safe_food(self, food, inventory):
         if not isinstance(food, dict) or food.get('id') not in inventory:
             return False
         if not all(type(food.get(k)) is int for k in ('slot', 'count', 'nutrition')):
             return False
-        if not (0 <= food['slot'] <= 8 and 1 <= food['count'] <= 64 and 1 <= food['nutrition'] <= 20):
+        if not (0 <= food['slot'] <= 35 and 1 <= food['count'] <= 64 and 1 <= food['nutrition'] <= 20):
             return False
-        return food['id'] not in {'minecraft:rotten_flesh', 'minecraft:spider_eye', 'minecraft:poisonous_potato',
-                                  'minecraft:pufferfish', 'minecraft:raw_chicken', 'minecraft:chorus_fruit'}
+        return self.foods.safe_id(food['id'])
 
     def snapshot(self):
         s = self.latest

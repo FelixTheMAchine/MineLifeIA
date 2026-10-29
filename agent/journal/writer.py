@@ -87,6 +87,10 @@ class JournalWriter:
             return 'Esta resposta observada me deixa uma nova margem para investigar, sem transformar possibilidades em fatos.'
         if kind == 'crafted':
             return 'A transformação dos itens e a estatística do servidor sustentam este resultado; o que construirei depois ainda está em aberto.'
+        if kind == 'ate':
+            return 'A alteração observada na fome confirmou o efeito desta refeição. Precisei cuidar de uma necessidade imediata antes de escolher o próximo caminho.'
+        if kind == 'crop_harvested':
+            return 'O cultivo maduro deixou de ocupar aquele bloco, como confirmou o servidor. Ainda preciso observar os itens que possam ter caído antes de dizer o que obtive.'
         if kind == 'attempt_failed':
             return 'A tentativa não forneceu prova suficiente. Posso mudar uma condição antes de considerar outra tentativa.'
         if kind == 'region_reached':
@@ -99,7 +103,7 @@ class JournalWriter:
     def _opening(events, style, day, kind):
         if kind == 'reflection':
             first = events[0]
-            return 'Quero guardar esta experiência específica e a pergunta que nasceu dela.' if first['type'] in ('collected', 'crafted', 'region_reached') else 'Registro esta tentativa junto com o que ela ainda não me permite concluir.'
+            return 'Quero guardar esta experiência específica e a pergunta que nasceu dela.' if first['type'] in ('collected', 'crafted', 'region_reached', 'ate', 'crop_harvested') else 'Registro esta tentativa junto com o que ela ainda não me permite concluir.'
         types = {e['type'] for e in events}
         if 'region_reached' in types and style.get('exploration', 95) >= 60:
             return f'No dia {day}, acrescentei ao meu mapa uma região cuja chegada foi confirmada.'

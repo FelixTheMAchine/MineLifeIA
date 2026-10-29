@@ -34,6 +34,16 @@ class PhilosophicalReflectionEngine:
             question = f"O que mudou na minha compreensão do lugar em torno das coordenadas observadas {position.get('x','?')}, {position.get('y','?')}, {position.get('z','?')}?"
             interpretation = "A posição alcançada e o bioma registrado acrescentam uma observação ao mapa; ainda não bastam para chamar o lugar de familiar ou seguro."
             importance, novelty = .66, .72
+        elif event['type'] == 'ate' and type(data.get('food_before')) is int and type(data.get('food_after')) is int:
+            theme = 'need-and-choice'
+            question = f"Depois de observar a fome subir de {data['food_before']} para {data['food_after']}, como devo equilibrar necessidades imediatas e objetivos de descoberta?"
+            interpretation = 'Nesta experiência, uma necessidade corporal observada mudou a prioridade da ação; isso não determina quais objetivos serão importantes em outros momentos.'
+            importance, novelty = .72, .68
+        elif event['type'] == 'crop_harvested':
+            theme = 'need-and-creation'
+            question = f"A remoção verificada de {subject or 'um cultivo maduro'} alterou o bloco; que recursos ela realmente oferece, e como isso poderia mudar minhas escolhas?"
+            interpretation = 'O servidor confirmou a remoção do cultivo, mas ainda não confirmei quais itens caíram; por enquanto, a utilidade permanece uma pergunta.'
+            importance, novelty = .74, .75
         elif event['type'] == 'attempt_failed':
             theme = 'failure'
             goal_rows = self.m.rows('SELECT g.status,p.attempts,p.last_error FROM Goals g JOIN GoalPlans p ON p.goal_id=g.id '

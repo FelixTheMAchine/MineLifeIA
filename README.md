@@ -41,6 +41,8 @@ A navegação certifica piso, espaço livre, líquidos e perigos próximos a cad
 
 O Life Journal escreve somente a partir de eventos registrados e exporta arquivos por mundo em `journals/<hash-do-mundo>/`. A coleta requer aumento de inventário verificado; crafting requer entrada consumida, saída recebida e estatística correspondente. Dias só são fechados depois que um dia posterior é observado. Arquivos locais de diário são ignorados pelo Git.
 
+O ciclo atual pode recolher itens observados no chão após confirmar tanto o aumento do inventário quanto a redução/remoção da mesma entidade pelo servidor. Com fome baixa, pode colher cultivos vanilla maduros visíveis durante o dia. A remoção do bloco não prova que um alimento caiu: o item e seu consumo precisam de confirmações próprias. Alimentação trata corretamente a última unidade e restaura o slot temporariamente trocado ao cancelar quando o estado permite. Essas capacidades novas passaram por testes automatizados e compilação, mas ainda aguardam validação dentro do Minecraft.
+
 ## Modelo de linguagem opcional
 
 O backend funciona sem provedor. Por padrão, `config/local.json` não contém configuração LLM e o modo é `none`. Um adaptador opcional aceita Ollama local ou uma API compatível com chat completions. Configure cópia local de `config/example.json`; guarde chaves de API apenas em variável de ambiente, nunca no JSON versionado. Não confunda uma assinatura ChatGPT com crédito da API. O adaptador aplica timeout, cache, limite de chamadas e tamanho de resposta. Suas sugestões podem ordenar uma meta já existente, mas não emitem comandos físicos, não confirmam fatos e não são incorporadas ao diário.

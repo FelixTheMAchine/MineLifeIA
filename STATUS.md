@@ -1,5 +1,14 @@
 # MineLife AI — status 0.2.0 — 2026-10-29
 
+## Continuação — comida observada e colheita local
+
+- Corrigido o resultado da alimentação da última unidade: sucesso usa diferença total de inventário no snapshot do servidor e aumento de fome, não exige que o slot continue ocupado. Falha, falta de nutrição, troca de slot, evidência indisponível e timeout de restauração têm motivos distintos. Cancelamento/erro passam pelo `finish`/`stop`, que libera uso e tenta reverter o swap temporário.
+- A percepção de itens no chão e o controlador `pickup` já existentes agora alimentam comida somente quando o item tem componente Food e consta da lista segura vanilla. Confirmar pickup exige aumento de inventário mais redução ou remoção, no servidor, da mesma entidade UUID observada.
+- Nova capability `harvest`: sensor Java identifica trigo, cenoura, batata e beterraba vanilla maduros próximos. O agente pode colhê-los quando está com fome, sem comida em inventário/chão e durante o dia. A ação usa quebra nativa; sucesso exige maturidade observada no estado do servidor antes da ação, bloco original removido e estatística MINED incrementada. Isso comprova apenas remoção, nunca os drops. Drops são recolhidos depois via `pickup`; alimento só é confirmado com mudança de fome.
+- A remoção verificada de cultivo e refeições podem gerar perguntas filosóficas contextuais sobre necessidades e escolhas; a interpretação diz expressamente quando os drops ainda não foram verificados.
+- Verificações desta continuação: 53 testes Python e build Gradle Fabric passaram (18 assertions Java de ControlGate/FoodEvidence). Cobrem consumo, pickup, harvest e proveniência, mas não simulam Minecraft. A versão ainda não foi executada no jogo.
+- Limites mantidos: caça de animais, cozimento/fornalha, cama, abrigo físico, ferramentas e crafting 3×3 continuam sem executores reais. Não foi instalado novo JAR nem aberto/alterado o save nesta continuação.
+
 ## Continuação posterior — alimentação de emergência
 
 - O protocolo agora anuncia alimentos disponíveis nos nove espaços do hotbar com item, slot, quantidade e nutrição obtidos do componente Food real do stack.

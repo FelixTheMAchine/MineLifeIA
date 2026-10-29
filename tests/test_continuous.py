@@ -117,6 +117,9 @@ class ContinuousTest(unittest.TestCase):
                   player=dict(x=0,y=64,z=0,health=20,food=10,danger=False,inventory={'minecraft:bread':1}))
         self.assertEqual(self.m.rows("SELECT status FROM Knowledge WHERE subject='food:minecraft:bread'")[0]['status'], 'confirmed')
         self.assertEqual(len(self.m.rows("SELECT * FROM Events WHERE type='ate' AND verified=1")), 1)
+        thought=self.m.rows("SELECT * FROM PhilosophicalQuestions WHERE theme='need-and-choice'")
+        self.assertTrue(thought)
+        self.assertTrue(self.m.rows('SELECT 1 FROM PhilosophicalRevisions WHERE origin_event=?',(thought[0]['origin_event'],)))
 
     def test_low_hunger_without_food_pauses_and_does_not_claim_survival(self):
         response = self.step(blocks=[], capabilities=CAPS+['eat'],
@@ -144,6 +147,93 @@ class ContinuousTest(unittest.TestCase):
                                          inventory={'minecraft:pufferfish':1},foods=[food]))
         self.assertIsNone(response['command'])
         self.assertEqual(response['state'], 'WAITING_FOR_SAFE_ACTION')
+
+    def test_hunger_uses_observed_food_drop_before_waiting(self):
+        item={'entity_id':str(uuid4()),'x':1.5,'y':64.0,'z':.5,'item_id':'minecraft:bread','count':1,'edible':True}
+        command=self.step(blocks=[],capabilities=CAPS+['eat','pickup'],items=[item],
+                          player=dict(x=0,y=64,z=0,health=20,food=4,danger=False,inventory={},foods=[]))['command']
+        self.assertEqual(command['action'],'pickup')
+        self.assertEqual(command['item']['entity_id'],item['entity_id'])
+
+    def test_mature_crop_is_harvested_only_after_server_block_and_mined_proof(self):
+        caps=CAPS+['harvest']
+        crop=dict(x=2,y=64,z=0,id='minecraft:wheat',log=False,harvestable=True)
+        approach=self.step(blocks=[crop],capabilities=caps)['command']
+        self.assertEqual(approach['action'],'approach')
+        self.assertEqual(approach['target']['id'],'minecraft:wheat')
+        in_reach=dict(target={k:approach['target'][k] for k in ('x','y','z')},in_reach=True)
+        harvest=self.step([self.success(approach,in_reach)],blocks=[crop],capabilities=caps)['command']
+        self.assertEqual(harvest['action'],'harvest')
+        ev=dict(target={k:harvest['target'][k] for k in ('x','y','z')},server_verified=True,
+                before_block='minecraft:wheat',after_block='minecraft:air',before_crop_mature=True,mined_delta=1,
+                inventory_before={'minecraft:wheat':0})
+        self.step([self.success(harvest,ev)],blocks=[],capabilities=caps)
+        self.assertTrue(self.m.rows("SELECT * FROM Events WHERE type='crop_harvested' AND verified=1"))
+        self.assertFalse(self.m.rows("SELECT * FROM Events WHERE type='collected' AND verified=1"))
+
+    def test_crop_removal_without_server_stat_is_not_confirmed(self):
+        caps=CAPS+['harvest']
+        crop=dict(x=2,y=64,z=0,id='minecraft:wheat',log=False,harvestable=True)
+        approach=self.step(blocks=[crop],capabilities=caps)['command']
+        harvest=self.step([self.success(approach,dict(target={k:approach['target'][k] for k in ('x','y','z')},in_reach=True))],
+                          blocks=[crop],capabilities=caps)['command']
+        ev=dict(target={k:harvest['target'][k] for k in ('x','y','z')},server_verified=True,
+                before_block='minecraft:wheat',after_block='minecraft:air',before_crop_mature=True,mined_delta=0)
+        self.step([self.success(harvest,ev)],blocks=[],capabilities=caps)
+        self.assertFalse(self.m.rows("SELECT * FROM Events WHERE type='crop_harvested' AND verified=1"))
+
+    def test_client_maturity_prediction_without_server_confirmation_is_rejected(self):
+        caps=CAPS+['harvest']
+        crop=dict(x=2,y=64,z=0,id='minecraft:wheat',log=False,harvestable=True)
+        approach=self.step(blocks=[crop],capabilities=caps)['command']
+        harvest=self.step([self.success(approach,dict(target={k:approach['target'][k] for k in ('x','y','z')},in_reach=True))],
+                          blocks=[crop],capabilities=caps)['command']
+        ev=dict(target={k:harvest['target'][k] for k in ('x','y','z')},server_verified=True,
+                before_block='minecraft:wheat',after_block='minecraft:air',mined_delta=1)
+        self.step([self.success(harvest,ev)],blocks=[],capabilities=caps)
+        self.assertFalse(self.m.rows("SELECT * FROM Events WHERE type='crop_harvested' AND verified=1"))
+
+    def test_hunger_can_start_daytime_crop_harvest_without_claiming_food_yet(self):
+        caps=CAPS+['eat','pickup','harvest']
+        crop=dict(x=2,y=64,z=0,id='minecraft:wheat',log=False,harvestable=True)
+        command=self.step(blocks=[crop],capabilities=caps,
+                          player=dict(x=0,y=64,z=0,health=20,food=3,danger=False,inventory={},foods=[]))['command']
+        self.assertEqual(command['action'],'approach')
+        self.assertEqual(command['target']['id'],'minecraft:wheat')
+        self.assertFalse(self.m.rows("SELECT * FROM Events WHERE type IN ('ate','collected') AND verified=1"))
+
+    def test_low_food_does_not_trigger_crop_harvest_at_night(self):
+        caps=CAPS+['eat','pickup','harvest']
+        crop=dict(x=2,y=64,z=0,id='minecraft:wheat',log=False,harvestable=True)
+        response=self.step(blocks=[crop],capabilities=caps,time=13000,
+                           player=dict(x=0,y=64,z=0,health=20,food=3,danger=False,inventory={},foods=[]))
+        self.assertIsNone(response['command'])
+        self.assertFalse(self.m.rows("SELECT * FROM Experiments WHERE status='running'"))
+
+    def test_pickup_requires_inventory_delta_and_server_entity_change(self):
+        item={'entity_id':str(uuid4()),'x':1.5,'y':64.0,'z':.5,'item_id':'minecraft:bread','count':1,'edible':True}
+        c=self.step(blocks=[],capabilities=CAPS+['eat','pickup'],items=[item],
+                    player=dict(x=0,y=64,z=0,health=20,food=4,danger=False,inventory={},foods=[]))['command']
+        ev=dict(target={k:c['target'][k] for k in ('x','y','z')},server_verified=True,
+                item_id='minecraft:bread',entity_id=item['entity_id'],entity_present_after=False,
+                entity_present_before=True,entity_count_before=1,entity_count_after=0,
+                inventory_before={},inventory_after={'minecraft:bread':1})
+        self.step([self.success(c,ev)],blocks=[],capabilities=CAPS+['eat','pickup'],items=[],
+                  player=dict(x=1,y=64,z=0,health=20,food=4,danger=False,inventory={'minecraft:bread':1},foods=[]))
+        self.assertEqual(self.m.rows("SELECT status FROM Knowledge WHERE subject='minecraft:bread'")[0]['status'],'confirmed')
+        self.assertEqual(len(self.m.rows("SELECT * FROM Events WHERE type='collected' AND verified=1")),1)
+
+    def test_disappeared_item_without_inventory_increase_is_not_learning(self):
+        item={'entity_id':str(uuid4()),'x':1.5,'y':64.0,'z':.5,'item_id':'minecraft:bread','count':1,'edible':True}
+        c=self.step(blocks=[],capabilities=CAPS+['eat','pickup'],items=[item],
+                    player=dict(x=0,y=64,z=0,health=20,food=4,danger=False,inventory={},foods=[]))['command']
+        ev=dict(target={k:c['target'][k] for k in ('x','y','z')},server_verified=True,
+                item_id='minecraft:bread',entity_id=item['entity_id'],entity_present_after=False,
+                entity_present_before=True,entity_count_before=1,entity_count_after=0,inventory_before={},inventory_after={})
+        self.step([self.success(c,ev)],blocks=[],capabilities=CAPS+['eat','pickup'],items=[],
+                  player=dict(x=1,y=64,z=0,health=20,food=4,danger=False,inventory={},foods=[]))
+        self.assertFalse(self.m.rows("SELECT * FROM Knowledge WHERE subject='minecraft:bread'"))
+        self.assertFalse(self.m.rows("SELECT * FROM Events WHERE type='collected' AND verified=1"))
 
     def test_inventory_change_alone_is_not_crafting_evidence(self):
         c=self.step(blocks=[],recipes=[RECIPE],capabilities=CAPS,

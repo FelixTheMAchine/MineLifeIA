@@ -4,6 +4,9 @@ O status diferencia implementação, validação automatizada e observação no 
 
 ## Em uso e coberto por testes locais
 
+- Continuação: pickup de `ItemEntity` exige UUID e prova dupla do servidor (inventário aumenta e a mesma entidade diminui/desaparece); prioridade para comida segura observada quando a fome está baixa. Colheita nativa inicial de trigo/cenoura/batata/beterraba maduros durante o dia confirma apenas bloco removido/estatística MINED; drops e refeição são confirmações separadas. Nenhum desses novos comportamentos foi ainda validado em gameplay.
+- Reflexões contextuais sobre necessidade e escolha após refeição verificada, e sobre cultivo removido sem presumir seus drops.
+
 - Controle do personagem local no integrado, autorização F8/F9/F10, pausa segura, handshake HTTP/1.1 autenticado e recuperação de desconexão.
 - Percepção local, observação de blocos visíveis, aproximação/mineração de troncos, prova de remoção/coleta, navegação segura em região local e crafting de receitas desbloqueadas 2×2 para tábuas, gravetos e bancada.
 - Cognição em ciclos limitados, objetivos por mundo, cooldowns, limites de repetição, oportunidades derivadas, exploração por fronteiras anunciadas e estado explícito de espera.

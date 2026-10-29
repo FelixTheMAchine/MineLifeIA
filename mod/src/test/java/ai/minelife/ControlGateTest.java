@@ -16,6 +16,10 @@ public final class ControlGateTest {
         gate.key(8,true);check(!gate.active && !gate.armed);
         check(gate.heartbeatExpired(3_100_000_000L,0));check(!gate.heartbeatExpired(2_900_000_000L,0));
         gate.stop("DISCONNECTED",true);check(!gate.active && !gate.armed);
-        System.out.println("ControlGate: "+checks+" assertions passed (not a gameplay test).");
+        check(FoodConsumptionEvidence.classify(5,10,1,0)==FoodConsumptionEvidence.Result.VERIFIED);
+        check(FoodConsumptionEvidence.classify(5,5,1,0)==FoodConsumptionEvidence.Result.NO_NUTRITION);
+        check(FoodConsumptionEvidence.classify(5,10,2,0)==FoodConsumptionEvidence.Result.WRONG_AMOUNT);
+        check(FoodConsumptionEvidence.classify(5,5,1,1)==FoodConsumptionEvidence.Result.NO_CONSUMPTION);
+        System.out.println("ControlGate/FoodEvidence: "+checks+" assertions passed (not a gameplay test).");
     }
 }

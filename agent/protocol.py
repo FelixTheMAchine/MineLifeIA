@@ -16,6 +16,7 @@ class Pos(StrictModel):
 class Block(Pos):
     id: str = Field(pattern=r'^[a-z0-9_.-]+:[a-z0-9_./-]+$', max_length=128)
     log: bool
+    harvestable: bool = False
 
 
 class Player(StrictModel):
@@ -31,9 +32,19 @@ class Player(StrictModel):
 
 class FoodOffer(StrictModel):
     id: str = Field(pattern=r'^[a-z0-9_.-]+:[a-z0-9_./-]+$', max_length=128)
-    slot: int = Field(ge=0, le=8)
+    slot: int = Field(ge=0, le=35)
     count: int = Field(ge=1, le=64)
     nutrition: int = Field(ge=1, le=20)
+
+
+class ItemObservation(StrictModel):
+    entity_id: UUID
+    x: float
+    y: float
+    z: float
+    item_id: str = Field(pattern=r'^[a-z0-9_.-]+:[a-z0-9_./-]+$', max_length=128)
+    count: int = Field(ge=1, le=64)
+    edible: bool
 
 
 class Result(StrictModel):
@@ -77,3 +88,4 @@ class Step(StrictModel):
     frontiers: list[Frontier] = Field(default_factory=list, max_length=16)
     entities: list[str] = Field(default_factory=list, max_length=32)
     recipes: list[RecipeOffer] = Field(default_factory=list, max_length=32)
+    items: list[ItemObservation] = Field(default_factory=list, max_length=24)
