@@ -26,6 +26,14 @@ class Player(StrictModel):
     food: int = Field(ge=0, le=20)
     danger: bool
     inventory: dict[str, int]
+    foods: list['FoodOffer'] = Field(default_factory=list, max_length=9)
+
+
+class FoodOffer(StrictModel):
+    id: str = Field(pattern=r'^[a-z0-9_.-]+:[a-z0-9_./-]+$', max_length=128)
+    slot: int = Field(ge=0, le=8)
+    count: int = Field(ge=1, le=64)
+    nutrition: int = Field(ge=1, le=20)
 
 
 class Result(StrictModel):

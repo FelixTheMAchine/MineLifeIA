@@ -58,6 +58,7 @@ public final class MineLifeClient implements ClientModInitializer {
     private long nextPoll, sensorTick = -100;
     private JsonArray cachedBlocks = new JsonArray(), cachedFrontiers = new JsonArray(), cachedRecipes = new JsonArray();
     private CraftingController crafting;
+    private EatingController eating;
     private String status = "Desativada · F8";
     private long seq, ticks, lastReply, lastPoll;
     private CompletableFuture<HttpResponse<String>> request;
@@ -72,6 +73,7 @@ public final class MineLifeClient implements ClientModInitializer {
     @Override public void onInitializeClient() {
         navigator = new Navigator(mc);
         crafting = new CraftingController(mc);
+        eating = new EatingController(mc);
         toggle = key("Ativar/desativar MineLife AI", GLFW.GLFW_KEY_F8);
         pause = key("Pausar/retomar MineLife AI", GLFW.GLFW_KEY_F9);
         emergency = key("Emergencia MineLife AI", GLFW.GLFW_KEY_F10);
@@ -147,7 +149,7 @@ public final class MineLifeClient implements ClientModInitializer {
     }
 
     private boolean dangerous() {
-        return mc.player == null || !mc.player.isAlive() || mc.player.getHealth() <= 8 || mc.player.getHungerManager().getFoodLevel() <= 6
+        return mc.player == null || !mc.player.isAlive() || mc.player.getHealth() <= 8
             || mc.player.isOnFire() || mc.player.isTouchingWater() || mc.player.isInLava() || mc.player.fallDistance > 2
             || !mc.world.getEntitiesByClass(HostileEntity.class, mc.player.getBoundingBox().expand(5), e -> e.isAlive()).isEmpty()
             || mc.interactionManager.getCurrentGameMode() != GameMode.SURVIVAL;
@@ -233,13 +235,14 @@ public final class MineLifeClient implements ClientModInitializer {
         o.addProperty("time", Math.floorMod(mc.world.getTimeOfDay(), 24000));
         o.addProperty("active", active); o.addProperty("armed", armed);
         o.addProperty("control_state", gate.state); o.addProperty("control_epoch", gate.epoch);
-        o.add("capabilities", JSON.toJsonTree(List.of("approach","break","collect","observe","explore","craft")));
+        o.add("capabilities", JSON.toJsonTree(List.of("approach","break","collect","observe","explore","craft","eat")));
         o.addProperty("biome", mc.world.getBiome(mc.player.getBlockPos()).getKey().map(k -> k.getValue().toString()).orElse("unknown"));
         o.add("entities", new JsonArray());
         JsonObject player = new JsonObject();
         player.addProperty("x", mc.player.getX()); player.addProperty("y", mc.player.getY()); player.addProperty("z", mc.player.getZ());
         player.addProperty("health", mc.player.getHealth()); player.addProperty("food", mc.player.getHungerManager().getFoodLevel());
-        player.addProperty("danger", dangerous()); player.add("inventory", inventory(mc.player.getInventory())); o.add("player", player);
+        player.addProperty("danger", dangerous()); player.add("inventory", inventory(mc.player.getInventory()));
+        player.add("foods", eating.offers()); o.add("player", player);
         if (ticks-sensorTick >= 20) { scanSensors(); sensorTick = ticks; }
         o.add("recipes", cachedRecipes);
         o.add("blocks", cachedBlocks); o.add("frontiers", cachedFrontiers); o.add("results", JSON.toJsonTree(results));
@@ -290,7 +293,7 @@ public final class MineLifeClient implements ClientModInitializer {
         seenCommands.add(id);
         if (seenCommands.size() > 4096) seenCommands.remove(seenCommands.iterator().next());
         String action = c.get("action").getAsString();
-        if (!Set.of("approach", "break", "collect", "explore", "observe", "craft").contains(action)) return;
+        if (!Set.of("approach", "break", "collect", "explore", "observe", "craft", "eat").contains(action)) return;
         JsonObject p = c.getAsJsonObject("target");
         target = new BlockPos(p.get("x").getAsInt(), p.get("y").getAsInt(), p.get("z").getAsInt());
         command = c.deepCopy(); commandStart = System.nanoTime(); attacked = false; airTicks = 0; after = null; baseline = null;
@@ -301,6 +304,13 @@ public final class MineLifeClient implements ClientModInitializer {
             String error = crafting.begin(c.getAsJsonObject("recipe"));
             if (error != null) finish("failed",error,new JsonObject());
             else status = "Crafting 2x2";
+            return;
+        }
+        if (action.equals("eat")) {
+            navigator.release();
+            String error = eating.begin(c.getAsJsonObject("food"));
+            if (error != null) finish("failed", error, new JsonObject());
+            else status = "Comendo alimento";
             return;
         }
         if (action.equals("observe")) { after=authoritative(); return; }
@@ -321,6 +331,12 @@ public final class MineLifeClient implements ClientModInitializer {
         if (action.equals("craft")) {
             JsonObject outcome=crafting.tick();
             if (outcome != null) finish(outcome.has("error")?"failed":"success",outcome.has("error")?outcome.get("error").getAsString():"server_confirmed_craft",outcome);
+            return;
+        }
+        if (action.equals("eat")) {
+            JsonObject outcome = eating.tick();
+            if (outcome != null) finish(outcome.has("error") ? "failed" : "success",
+                    outcome.has("error") ? outcome.get("error").getAsString() : "server_confirmed_food_and_inventory", outcome);
             return;
         }
         if (action.equals("observe")) {
@@ -440,6 +456,7 @@ public final class MineLifeClient implements ClientModInitializer {
         mc.options.useKey.setPressed(false);
         if (mc.interactionManager != null) mc.interactionManager.cancelBlockBreaking();
         crafting.cancel();
+        eating.cancel();
         evidence.add("target", position(target));
         JsonObject r = new JsonObject(); r.add("id", command.get("id")); r.addProperty("status", outcome);
         r.addProperty("reason", reason); r.add("evidence", evidence); results.add(r);

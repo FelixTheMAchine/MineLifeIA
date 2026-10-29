@@ -1,5 +1,15 @@
 # MineLife AI — status 0.2.0 — 2026-10-29
 
+## Continuação posterior — alimentação de emergência
+
+- O protocolo agora anuncia alimentos disponíveis nos nove espaços do hotbar com item, slot, quantidade e nutrição obtidos do componente Food real do stack.
+- Quando fome alcança o limite prudente, o backend prioriza um item permitido e envia a ação `eat`. O mod seleciona temporariamente esse slot e mantém a tecla de uso normal; não cria nem move itens.
+- A ação só gera conhecimento/evento após snapshots do servidor integrado confirmarem aumento do nível de fome e consumo de exatamente uma unidade. Alimentos com efeitos negativos conhecidos e chorus fruit são recusados.
+- Sem alimento permitido, o agente permanece em `WAITING_FOR_SAFE_ACTION` com motivo explícito. Coleta/cozimento/plantio de comida e sobrevivência prolongada continuam ausentes.
+- Testes automatizados cobrem seleção, prioridade, alimento recusado, falta de comida e rejeição de evidência incompleta. O build Fabric confirma APIs de 1.21.1. Isso não demonstra consumo em jogo; nenhuma sessão Minecraft foi executada nesta continuação.
+- Após o processo Java encerrar naturalmente, `scripts/Install-Mod.ps1` concluiu a instalação e criou backup verificado do mundo antes de substituir o mod. Nenhum processo foi terminado manualmente. A instalação foi em disco; não houve abertura do mundo ou validação de gameplay.
+- Validação final: `scripts/Test.ps1` passou com build Fabric e 45 testes Python; JAR construído e instalado conferem por SHA-256. O sistema continua sem teste de gameplay nesta execução.
+
 ## Ponto de partida e preservação
 
 Workspace do projeto e remote oficial confirmados; branch `main` é a única branch de publicação. Existe o checkpoint `safety/pre-0.2-20261028` no commit anterior ao trabalho 0.2. O histórico remoto não foi reescrito. Alterações locais e a memória anterior foram mantidas.

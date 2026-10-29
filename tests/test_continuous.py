@@ -104,6 +104,47 @@ class ContinuousTest(unittest.TestCase):
         self.assertEqual(self.m.rows('SELECT status FROM Knowledge')[0]['status'],'confirmed')
         self.assertTrue(self.m.rows("SELECT * FROM Events WHERE type='crafted'"))
 
+    def test_low_hunger_selects_real_food_action_and_records_only_verified_eating(self):
+        food = {'id':'minecraft:bread','slot':2,'count':2,'nutrition':5}
+        c = self.step(blocks=[], capabilities=CAPS+['eat'],
+                      player=dict(x=0,y=64,z=0,health=20,food=5,danger=False,
+                                  inventory={'minecraft:bread':2},foods=[food]))['command']
+        self.assertEqual(c['action'], 'eat')
+        ev = dict(target={k:c['target'][k] for k in ('x','y','z')}, server_verified=True,
+                  food_before=5, food_after=10,
+                  inventory_before={'minecraft:bread':2}, inventory_after={'minecraft:bread':1})
+        self.step([self.success(c,ev)], blocks=[], capabilities=CAPS+['eat'],
+                  player=dict(x=0,y=64,z=0,health=20,food=10,danger=False,inventory={'minecraft:bread':1}))
+        self.assertEqual(self.m.rows("SELECT status FROM Knowledge WHERE subject='food:minecraft:bread'")[0]['status'], 'confirmed')
+        self.assertEqual(len(self.m.rows("SELECT * FROM Events WHERE type='ate' AND verified=1")), 1)
+
+    def test_low_hunger_without_food_pauses_and_does_not_claim_survival(self):
+        response = self.step(blocks=[], capabilities=CAPS+['eat'],
+                             player=dict(x=0,y=64,z=0,health=20,food=4,danger=False,inventory={},foods=[]))
+        self.assertIsNone(response['command'])
+        self.assertEqual(response['state'], 'WAITING_FOR_SAFE_ACTION')
+        self.assertFalse(self.m.rows("SELECT * FROM Events WHERE type='ate'"))
+
+    def test_inventory_decrease_without_hunger_increase_is_not_food_knowledge(self):
+        food = {'id':'minecraft:bread','slot':1,'count':1,'nutrition':5}
+        c = self.step(blocks=[], capabilities=CAPS+['eat'],
+                      player=dict(x=0,y=64,z=0,health=20,food=5,danger=False,
+                                  inventory={'minecraft:bread':1},foods=[food]))['command']
+        ev = dict(target={k:c['target'][k] for k in ('x','y','z')}, server_verified=True,
+                  food_before=5, food_after=5, inventory_before={'minecraft:bread':1}, inventory_after={})
+        self.step([self.success(c,ev)], blocks=[], capabilities=CAPS+['eat'],
+                  player=dict(x=0,y=64,z=0,health=20,food=5,danger=False,inventory={}))
+        self.assertFalse(self.m.rows("SELECT * FROM Knowledge WHERE subject='food:minecraft:bread'"))
+        self.assertFalse(self.m.rows("SELECT * FROM Events WHERE type='ate'"))
+
+    def test_poisonous_food_offer_is_not_selected(self):
+        food = {'id':'minecraft:pufferfish','slot':0,'count':1,'nutrition':1}
+        response = self.step(blocks=[], capabilities=CAPS+['eat'],
+                             player=dict(x=0,y=64,z=0,health=20,food=4,danger=False,
+                                         inventory={'minecraft:pufferfish':1},foods=[food]))
+        self.assertIsNone(response['command'])
+        self.assertEqual(response['state'], 'WAITING_FOR_SAFE_ACTION')
+
     def test_inventory_change_alone_is_not_crafting_evidence(self):
         c=self.step(blocks=[],recipes=[RECIPE],capabilities=CAPS,
                     player=dict(x=0,y=64,z=0,health=20,food=20,danger=False,inventory={'minecraft:birch_log':1}))['command']

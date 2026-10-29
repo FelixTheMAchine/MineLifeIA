@@ -14,6 +14,8 @@ class Skill:
 class SkillRegistry:
     """Só habilidades com executor físico real; capacidades são negociadas com o mod."""
     skills = {
+        'eat_food': Skill('eat_food', ('eat',), 'fome abaixo da margem prudente e alimento conhecido sem efeito negativo no hotbar',
+                          'Servidor confirma aumento da fome e consumo de exatamente uma unidade', max_attempts=3, timeout_seconds=12),
         'craft_planks': Skill('craft_planks', ('craft',), 'receita vanilla 2x2 desbloqueada de tábuas, gravetos ou bancada; grade vazia e materiais',
                              'estatística CRAFTED e inventário confirmam resultado e ingredientes consumidos'),
         'investigate_log': Skill('investigate_log', ('approach', 'break', 'collect'),

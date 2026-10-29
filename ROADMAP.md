@@ -9,6 +9,7 @@ O status diferencia implementação, validação automatizada e observação no 
 - Cognição em ciclos limitados, objetivos por mundo, cooldowns, limites de repetição, oportunidades derivadas, exploração por fronteiras anunciadas e estado explícito de espera.
 - SQLite migrável com backup, personalidade/interesses que alteram prioridades e margem de segurança, memórias episódicas salientes, recuperação lexical e reflexões contextuais ligadas à evidência.
 - Diário narrativo por eventos com manifest de proveniência, lembranças anteriores e interpretações provisórias. Rascunhos de LLM são persistidos como não verificados e nunca entram no conhecimento factual ou no diário publicável.
+- Alimentação de emergência com comida segura existente no hotbar: execução pela tecla nativa e confirmação de fome/inventário no servidor. Esta implementação ainda precisa de teste de gameplay.
 - Life Observer com mente estruturada e rascunhos rotulados. Publicador de diário para o repositório oficial, mas envio automático/publicação de diário permanecem desativados.
 
 ## Necessita validação no Minecraft desta versão
@@ -20,7 +21,7 @@ Um teste anterior do MVP 0.1 confirmou quebra e coleta de um tronco de bétula e
 
 ## Próximas capacidades, depois de validar a base
 
-1. Sobrevivência noturna segura: comida, cama/abrigo, rota de retirada e interrupção de perigo sem congelamento indefinido.
+1. Obter comida: coleta segura, inspeção de animais/plantas e, depois, cozinha; a habilidade atual somente come itens já no hotbar. Em seguida, sobrevivência noturna com cama/abrigo, rota de retirada e resposta a perigos sem congelamento indefinido.
 2. Inventário e crafting 3×3 por bancada, fornalhas, ferramentas, armadura e uso de itens com provas de consumo/resultado.
 3. Navegação por rotas maiores, memória de retorno, caminhos alternativos e recuperação de terreno; sem assumir que uma fronteira local seja segura para viajar longas distâncias.
 4. Projetos físicos de construção com cálculo de materiais, posicionamento nativo de blocos e inspeção/correção.

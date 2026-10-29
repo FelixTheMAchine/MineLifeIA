@@ -59,7 +59,8 @@ class CognitiveEngine:
         self._state(s, 'EXPLORING' if action == 'explore' else 'EXPERIMENTING',
                     {'approach': 'Aproximando de um alvo observado', 'break': 'Testando quebra de tronco',
                      'collect': 'Verificando coleta', 'observe': 'Verificando um bloco',
-                     'craft': 'Testando receita desbloqueada na grade 2×2', 'explore': 'Avançando para fronteira local validada'}[action])
+                     'craft': 'Testando receita desbloqueada na grade 2×2', 'explore': 'Avançando para fronteira local validada',
+                     'eat': 'Recuperando a fome com alimento disponível'}[action])
         return payload
 
     def _knowledge(self, s, subject, status, eid):
@@ -187,6 +188,17 @@ class CognitiveEngine:
                 eid = self._event(s, 'crafted', f"Testei a receita {recipe['id']}: consumi {recipe.get('input_count',1)} {recipe['input_id']} e obtive {recipe['output_count']} {recipe['output_id']}. As mudanças de inventário e a fabricação foram verificadas no servidor.", ev, cmd['id'])
                 self._knowledge(s, subject, 'confirmed', eid)
                 self.goals.supersede(s.world, 'application:' + recipe['input_id'])
+        elif action == 'eat':
+            food = cmd['food']
+            before, after = ev.get('inventory_before', {}), ev.get('inventory_after', {})
+            food_before, food_after = ev.get('food_before'), ev.get('food_after')
+            valid &= (ev.get('server_verified') is True and valid_inventory(before) and valid_inventory(after)
+                      and food.get('id') == target['id'] and type(food_before) is int and type(food_after) is int
+                      and food_after > food_before and before.get(target['id'], 0) - after.get(target['id'], 0) == 1)
+            if valid:
+                subject = 'food:' + target['id']
+                eid = self._event(s, 'ate', f'Comi uma unidade de {target["id"]}; o servidor confirmou aumento da fome de {food_before} para {food_after} e redução do inventário.', ev, cmd['id'])
+                self._knowledge(s, subject, 'confirmed', eid)
         else: valid = False
         if not valid:
             self.m.db.execute("UPDATE Commands SET status='unverified' WHERE id=?", (cmd['id'],))
@@ -228,7 +240,7 @@ class CognitiveEngine:
                         ack=[str(r.id) for r in s.results], control=self.control, command=None)
         self.control = None
         health_limit, food_limit = self.motivation.safety_limits(s.world)
-        unsafe = s.player.health <= health_limit or s.player.food <= food_limit or s.player.danger
+        unsafe = s.player.health <= health_limit or s.player.danger
         if unsafe:
             response['control'] = 'pause'
             self.dominant = 'SURVIVAL'
@@ -291,6 +303,35 @@ class CognitiveEngine:
         frontiers = self.exploration.candidates(s)
         self.dominant, personality = self.motivation.evaluate(s, bool(candidates), len(frontiers))
         self._derive(s, known)
+        # Hunger is an executable need only when safe food is available in the hotbar.
+        if s.player.food <= self.motivation.safety_limits(s.world)[1]:
+            foods = [f.model_dump() for f in s.player.foods if self._safe_food(f.model_dump(), s.player.inventory)]
+            if foods and 'eat' in s.capabilities:
+                food = max(foods, key=lambda f: (f['nutrition'], f['count'], f['id']))
+                meal_prefix = f'meal:{s.day}:'
+                meal_number = self.m.rows('SELECT count(*) n FROM GoalPlans WHERE world=? AND subject LIKE ?',
+                                          (s.world, meal_prefix + '%'))[0]['n'] + 1
+                subject = meal_prefix + food['id'] + ':' + str(meal_number)
+                target = dict(x=math.floor(s.player.x), y=math.floor(s.player.y), z=math.floor(s.player.z), id=food['id'])
+                gid = self.goals.ensure(s, subject, 'Comer alimento para recuperar minhas reservas',
+                                        'Fome baixa observada e alimento seguro no inventário.',
+                                        1000 + (20-s.player.food)*10, 'survival',
+                                        {'target': target, 'food': food}, 'eat_food', 'IMMEDIATE')
+                if gid:
+                    goal = next(g for g in self.goals.rows(s.world) if g['id'] == gid)
+                    hypothesis = str(uuid4())
+                    self.m.db.execute("INSERT OR IGNORE INTO Hypotheses VALUES(?,?,?,?,'hypothesis','[]')",
+                                      (hypothesis, s.world, goal['description'], 'Consumir o alimento deve elevar a fome e reduzir sua quantidade no inventário.'))
+                    hypothesis = self.m.rows('SELECT id FROM Hypotheses WHERE world=? AND question=?',
+                                             (s.world, goal['description']))[0]['id']
+                    exp = dict(id=str(uuid4()), world=s.world, session=str(s.session), hypothesis=hypothesis,
+                               target=json.dumps(target, sort_keys=True), phase='eat', status='running', evidence_ids='[]')
+                    self.m.db.execute('INSERT INTO Experiments VALUES(:id,:world,:session,:hypothesis,:target,:phase,:status,:evidence_ids)', exp)
+                    self.m.db.execute('INSERT INTO ExperimentGoals VALUES(?,?)', (exp['id'], gid))
+                    self.m.db.execute("UPDATE Goals SET status='running' WHERE id=?", (gid,))
+                    return self._command(s, exp, 'eat', food=food)
+            self._state(s, 'WAITING_FOR_SAFE_ACTION', 'Fome baixa; sem alimento seguro executável no inventário')
+            return None
         if s.time >= 12000:
             self._state(s, 'WAITING_FOR_SAFE_ACTION', 'Noite: aguardando luz; abrigo e combate ainda não executáveis')
             return None
@@ -355,6 +396,17 @@ class CognitiveEngine:
         if 'explore' not in s.capabilities: reason += ' Instale o mod 0.2 para anunciar exploração e crafting.'
         self._state(s, 'WAITING_FOR_SAFE_ACTION', reason)
         return None
+
+    @staticmethod
+    def _safe_food(food, inventory):
+        if not isinstance(food, dict) or food.get('id') not in inventory:
+            return False
+        if not all(type(food.get(k)) is int for k in ('slot', 'count', 'nutrition')):
+            return False
+        if not (0 <= food['slot'] <= 8 and 1 <= food['count'] <= 64 and 1 <= food['nutrition'] <= 20):
+            return False
+        return food['id'] not in {'minecraft:rotten_flesh', 'minecraft:spider_eye', 'minecraft:poisonous_potato',
+                                  'minecraft:pufferfish', 'minecraft:raw_chicken', 'minecraft:chorus_fruit'}
 
     def snapshot(self):
         s = self.latest

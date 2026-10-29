@@ -8,7 +8,7 @@ A versão atual desenvolve um ciclo contínuo de observação, necessidades, mem
 
 O código Java compila e a comunicação HTTP/1.1 Java–FastAPI foi exercitada em loopback com fixtures. O comportamento desta versão e o crafting **ainda precisam de validação na interface real do Minecraft**. Uma sessão anterior do MVP 0.1 confirmou a descoberta de um tronco de bétula e a persistência do diário; isso não comprova o novo executor de crafting nem toda a versão 0.2. Consulte [STATUS.md](STATUS.md) para a verificação corrente.
 
-Não estão implementados combate, alimentação, abrigo noturno, mineração geral com ferramentas, crafting 3×3 em bancada, construção física de projetos, agricultura, fornalhas, comércio, relações com MCA Reborn, família ou civilização. O LLM é um conselheiro opcional e não escreve fatos no diário. Exploração termina na fronteira local que o navegador consegue certificar. O agente pode aguardar quando não encontra uma ação segura.
+Alimentação autônoma foi implementada para alimentos com componente Food já no hotbar: usa o comando normal de consumir e só registra o resultado quando o servidor confirma aumento de fome e consumo de exatamente uma unidade. Ainda não coleta, cozinha ou planta alimentos; sem comida segura, aguarda. Também não estão implementados combate, abrigo noturno, mineração geral com ferramentas, crafting 3×3 em bancada, construção física de projetos, agricultura, fornalhas, comércio, relações com MCA Reborn, família ou civilização. O LLM é um conselheiro opcional e não escreve fatos no diário. Exploração termina na fronteira local que o navegador consegue certificar. Capacidades novas precisam de validação no jogo antes de serem tratadas como testadas.
 
 ## Requisitos e preparação
 
