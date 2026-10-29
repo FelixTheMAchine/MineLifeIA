@@ -4,7 +4,9 @@ import math
 
 UNSAFE_VANILLA_FOOD = {
     'minecraft:rotten_flesh', 'minecraft:spider_eye', 'minecraft:poisonous_potato',
-    'minecraft:pufferfish', 'minecraft:raw_chicken', 'minecraft:chorus_fruit',
+    'minecraft:pufferfish', 'minecraft:raw_chicken', 'minecraft:chicken', 'minecraft:chorus_fruit',
+    'minecraft:suspicious_stew', 'minecraft:honey_bottle', 'minecraft:rabbit_stew',
+    'minecraft:mushroom_stew', 'minecraft:beetroot_soup',
 }
 
 
@@ -26,7 +28,7 @@ class FoodAcquisitionManager:
         return min(candidates, default=(None, None, None, None), key=lambda row: row[:3])[3]
 
     def choose_resource(self, observations, player, inventory):
-        useful = {'minecraft:wheat_seeds', 'minecraft:beetroot_seeds', 'minecraft:melon_seeds',
+        useful = {'minecraft:wheat', 'minecraft:wheat_seeds', 'minecraft:beetroot_seeds', 'minecraft:melon_seeds',
                   'minecraft:pumpkin_seeds', 'minecraft:oak_log', 'minecraft:birch_log',
                   'minecraft:spruce_log', 'minecraft:jungle_log', 'minecraft:acacia_log',
                   'minecraft:dark_oak_log', 'minecraft:mangrove_log', 'minecraft:cherry_log',

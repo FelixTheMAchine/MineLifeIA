@@ -11,6 +11,7 @@ from agent.exploration import ExplorationManager, region
 from agent.autobiography import Autobiography
 from agent.philosophy import PhilosophicalReflectionEngine
 from agent.food import FoodAcquisitionManager
+from agent.crafting import CraftingPlanner, ingredients, craft_evidence
 
 
 def valid_inventory(value):
@@ -26,6 +27,7 @@ class CognitiveEngine:
         self.goals = GoalManager(memory, max(1, min(32, settings.get('max_active_goals', 8))))
         self.skills, self.interests = SkillRegistry(), InterestManager(memory)
         self.foods = FoodAcquisitionManager()
+        self.crafting = CraftingPlanner(memory)
         self.motivation, self.exploration = MotivationEngine(memory), ExplorationManager(memory)
         self.autobiography = Autobiography(memory)
         self.philosophy = PhilosophicalReflectionEngine(memory, self.autobiography)
@@ -61,7 +63,8 @@ class CognitiveEngine:
         self._state(s, 'EXPLORING' if action == 'explore' else 'EXPERIMENTING',
                     {'approach': 'Aproximando de um alvo observado', 'break': 'Testando quebra de tronco',
                      'collect': 'Verificando coleta', 'observe': 'Verificando um bloco',
-                     'craft': 'Testando receita desbloqueada na grade 2×2', 'explore': 'Avançando para fronteira local validada',
+                     'craft': 'Fabricando na grade 2×2', 'craft_table': 'Fabricando na bancada 3×3',
+                     'place': 'Colocando estação no espaço observado', 'explore': 'Avançando para fronteira local validada',
                      'eat': 'Recuperando a fome com alimento disponível', 'pickup': 'Recolhendo um item observado',
                      'harvest': 'Colhendo cultivo maduro observado', 'sleep': 'Tentando repouso noturno em cama observada'}[action])
         return payload
@@ -89,7 +92,7 @@ class CognitiveEngine:
         knowledge = self.m.rows('SELECT evidence_ids FROM Knowledge WHERE world=? AND subject=?', (s.world, subject))
         first_evidence = bool(knowledge and len(json.loads(knowledge[0]['evidence_ids'])) == 1)
         importance = {'crafted': .82, 'collected': .8, 'region_reached': .68, 'observed': .35,
-                      'slept': .86, 'crop_harvested': .74}.get(event_type, .3)
+                      'slept': .86, 'crop_harvested': .74, 'placed': .85}.get(event_type, .3)
         self.autobiography.record(s.world, eid, self.interests.topic(subject), importance,
                                   1.0 if first_evidence else .55, {'day': s.day, 'subject': subject})
         self.philosophy.consider(s.world, s.day, str(s.session), eid)
@@ -168,6 +171,7 @@ class CognitiveEngine:
             valid &= (ev.get('server_verified') is True and ev.get('rest_completed') is True
                       and ev.get('bed_block') == target['id']
                       and type(before_time) is int and type(after_time) is int
+                      and 0 < after_time-before_time <= 24000
                       and before_time % 24000 >= 12542 and after_time % 24000 < 12000
                       and type(ev.get('sleep_count_before')) is int and type(ev.get('sleep_count_after')) is int
                       and ev['sleep_count_after'] > ev['sleep_count_before'])
@@ -200,18 +204,29 @@ class CognitiveEngine:
             if valid:
                 subject = 'exploration'
                 eid = self._event(s, 'region_reached', f"Cheguei à região que escolhi investigar. Observei o bioma {s.biome}; vou usar essa visita para orientar meus próximos destinos.", ev, cmd['id'])
-        elif action == 'craft':
+        elif action in ('craft','craft_table'):
             recipe = cmd['recipe']
             a, b = ev.get('inventory_before', {}), ev.get('inventory_after', {})
-            valid &= (valid_inventory(a) and valid_inventory(b) and ev.get('server_verified') is True
-                      and ev.get('recipe') == recipe['id'] and type(ev.get('crafted_delta')) is int and ev.get('crafted_delta') == recipe['output_count']
-                      and a.get(recipe['input_id'], 0) - b.get(recipe['input_id'], 0) == recipe.get('input_count',1)
-                      and b.get(recipe['output_id'], 0) - a.get(recipe['output_id'], 0) == recipe['output_count'])
+            valid &= (valid_inventory(a) and valid_inventory(b) and craft_evidence(recipe,ev)
+                      and (action=='craft_table') == (recipe.get('grid',2)==3))
             if valid:
                 subject = 'recipe:' + recipe['id']
-                eid = self._event(s, 'crafted', f"Testei a receita {recipe['id']}: consumi {recipe.get('input_count',1)} {recipe['input_id']} e obtive {recipe['output_count']} {recipe['output_id']}. As mudanças de inventário e a fabricação foram verificadas no servidor.", ev, cmd['id'])
+                consumed=', '.join(f'{v} {k}' for k,v in sorted(ingredients(recipe).items()))
+                eid = self._event(s, 'crafted', f"Testei a receita {recipe['id']}: consumi {consumed} e obtive {recipe['output_count']} {recipe['output_id']}. As mudanças de inventário e a fabricação foram verificadas no servidor.", ev, cmd['id'])
                 self._knowledge(s, subject, 'confirmed', eid)
-                self.goals.supersede(s.world, 'application:' + recipe['input_id'])
+                for item in ingredients(recipe): self.goals.supersede(s.world, 'application:' + item)
+        elif action == 'place':
+            placement=cmd['placement'];item=placement['item_id']
+            a,b=ev.get('inventory_before'),ev.get('inventory_after')
+            valid &= (valid_inventory(a) and valid_inventory(b) and ev.get('server_verified') is True
+                      and item==target['id'] and ev.get('before_block')=='minecraft:air'
+                      and ev.get('after_block')==item and ev.get('support')==placement['support']
+                      and type(ev.get('used_delta')) is int and ev['used_delta']==1
+                      and a.get(item,0)-b.get(item,0)==1)
+            if valid:
+                subject=f"placement:{s.dimension}:{item}:{target['x']}:{target['y']}:{target['z']}"
+                eid=self._event(s,'placed',f'Coloquei {item} em um espaço livre. O servidor confirmou o bloco, o consumo de uma unidade e a estatística de uso. Isso registra uma estação colocada, sem afirmar que construí um abrigo.',ev,cmd['id'])
+                self._knowledge(s,subject,'confirmed',eid)
         elif action == 'eat':
             food = cmd['food']
             before, after = ev.get('inventory_before', {}), ev.get('inventory_after', {})
@@ -302,10 +317,10 @@ class CognitiveEngine:
             if ids: self.interests.update(s, self.interests.topic(item), ids[-1])
             subject = 'application:' + item
             self.goals.question(s, subject, f'Que aplicações de {item} consigo testar com minhas habilidades atuais?', ids[-1] if ids else None)
-            if item.startswith('recipe:'):
+            if item.startswith('recipe:') and 'craft_table' not in s.capabilities:
                 self.goals.ensure(s, subject, 'Investigar ferramentas usando uma bancada', 'Usar uma bancada e receitas 3×3 requer um controlador ainda não implementado; fabricar o item bancada na grade 2×2 já é possível.',
                                   40, 'future', {}, 'craft_table', 'MEDIUM_TERM', blocked=True)
-            elif not any(r.input_id == item for r in s.recipes):
+            elif not item.startswith('recipe:') and not any(item in ingredients(r.model_dump()) for r in s.recipes):
                 self.goals.ensure(s, subject, 'Investigar crafting com ' + item,
                                   'Aguardando uma receita 2×2 desbloqueada e anunciada pelo mod.', 50, 'future', {}, 'craft_planks', 'MEDIUM_TERM', blocked=True)
 
@@ -338,80 +353,76 @@ class CognitiveEngine:
         self._state(s, 'PLANNING', 'Consultando memória, necessidades e oportunidades')
         self.exploration.record(s)
         known = {r['subject']: r for r in self.m.rows("SELECT * FROM Knowledge WHERE world=? AND status='confirmed'", (s.world,))}
-        candidates = [b for b in s.blocks if b.harvestable or (b.id if b.log else 'observation:'+b.id) not in known]
+        need_wood=self.crafting.needs_wood(s)
+        candidates = [b for b in s.blocks if not b.bed and (b.harvestable or b.log and need_wood or (b.id if b.log else 'observation:'+b.id) not in known)]
         frontiers = self.exploration.candidates(s)
         self.dominant, personality = self.motivation.evaluate(s, bool(candidates), len(frontiers))
         self._derive(s, known)
-        # Hunger is an executable need only when safe food is available in the hotbar.
+        offered=set()
+        # Food, its observed sources and executable preparation are considered before curiosity.
         if s.player.food <= self.motivation.safety_limits(s.world)[1]:
             foods = [f.model_dump() for f in s.player.foods if self._safe_food(f.model_dump(), s.player.inventory)]
-            if foods and 'eat' in s.capabilities:
-                food = max(foods, key=lambda f: (f['nutrition'], f['count'], f['id']))
-                meal_prefix = f'meal:{s.day}:'
-                meal_number = self.m.rows('SELECT count(*) n FROM GoalPlans WHERE world=? AND subject LIKE ?',
-                                          (s.world, meal_prefix + '%'))[0]['n'] + 1
-                subject = meal_prefix + food['id'] + ':' + str(meal_number)
-                target = dict(x=math.floor(s.player.x), y=math.floor(s.player.y), z=math.floor(s.player.z), id=food['id'])
-                gid = self.goals.ensure(s, subject, 'Comer alimento para recuperar minhas reservas',
-                                        'Fome baixa observada e alimento seguro no inventário.',
-                                        1000 + (20-s.player.food)*10, 'survival',
-                                        {'target': target, 'food': food}, 'eat_food', 'IMMEDIATE')
-                if gid:
-                    goal = next(g for g in self.goals.rows(s.world) if g['id'] == gid)
-                    hypothesis = str(uuid4())
-                    self.m.db.execute("INSERT OR IGNORE INTO Hypotheses VALUES(?,?,?,?,'hypothesis','[]')",
-                                      (hypothesis, s.world, goal['description'], 'Consumir o alimento deve elevar a fome e reduzir sua quantidade no inventário.'))
-                    hypothesis = self.m.rows('SELECT id FROM Hypotheses WHERE world=? AND question=?',
-                                             (s.world, goal['description']))[0]['id']
-                    exp = dict(id=str(uuid4()), world=s.world, session=str(s.session), hypothesis=hypothesis,
-                               target=json.dumps(target, sort_keys=True), phase='eat', status='running', evidence_ids='[]')
-                    self.m.db.execute('INSERT INTO Experiments VALUES(:id,:world,:session,:hypothesis,:target,:phase,:status,:evidence_ids)', exp)
-                    self.m.db.execute('INSERT INTO ExperimentGoals VALUES(?,?)', (exp['id'], gid))
-                    self.m.db.execute("UPDATE Goals SET status='running' WHERE id=?", (gid,))
-                    return self._command(s, exp, 'eat', food=food)
+            if 'eat' in s.capabilities:
+                for food in sorted(foods,key=lambda f:(f['nutrition'],f['count'],f['id']),reverse=True):
+                    command=self._start_eat(s,food)
+                    if command:return command
             food_item = self.foods.choose(s.items, s.player, s.player.inventory,
                                           self.motivation.safety_limits(s.world)[1])
             if food_item is not None and 'pickup' in s.capabilities:
-                return self._start_pickup(s, food_item, 1200 + (20-s.player.food)*10,
+                pickup_command=self._start_pickup(s, food_item, 1200 + (20-s.player.food)*10,
                                           'Alimento com componente Food observado no mundo; estoque atual insuficiente.',
                                           'IMMEDIATE')
-            if s.time < 12000 and 'harvest' in s.capabilities:
+                if pickup_command: return pickup_command
+            if s.player.inventory.get('minecraft:wheat',0)>=3 and s.time<12000:
+                offered=self._work_goals(s,personality)
+                for goal in self.goals.rows(s.world):
+                    params=json.loads(goal['params'])
+                    if goal['id'] in offered and goal['status']=='pending' and (goal['kind']=='place' or
+                            params.get('recipe',{}).get('output_id') in ('minecraft:bread','minecraft:crafting_table') or
+                            params.get('recipe',{}).get('output_id','').endswith('_planks')):
+                        return self._start_planned(s,goal)
+            if 'pickup' in s.capabilities and s.time<12000:
+                wheat=self.foods.choose_resource([i for i in s.items if i.item_id=='minecraft:wheat'],s.player,s.player.inventory)
+                if wheat is not None:
+                    command=self._start_pickup(s,wheat,1100,'Reunir trigo observado para uma receita de alimento.','IMMEDIATE')
+                    if command:return command
+            if s.time < 12000 and self.skills.available('harvest_crop',s.capabilities):
                 ripe = sorted((b for b in s.blocks if b.harvestable),
-                              key=lambda b: math.dist((s.player.x,s.player.y,s.player.z),(b.x,b.y,b.z)))
+                              key=lambda b: (b.id=='minecraft:wheat',math.dist((s.player.x,s.player.y,s.player.z),(b.x,b.y,b.z))))
                 for crop in ripe:
                     if math.dist((s.player.x,s.player.y,s.player.z),(crop.x,crop.y,crop.z)) > 14: continue
                     target = crop.model_dump(exclude={'log','harvestable'})
                     if self.m.rows("SELECT 1 FROM Experiments WHERE world=? AND target=? AND status IN ('failed','unverified')",
                                    (s.world,json.dumps(target,sort_keys=True))): continue
-                    return self._start_harvest(s,crop,1500+(20-s.player.food)*10,
+                    command=self._start_harvest(s,crop,1500+(20-s.player.food)*10,
                                                'Fome baixa, sem alimento seguro no inventário ou no chão; cultivo maduro visível durante o dia.',
                                                'IMMEDIATE')
+                    if command:return command
             self._state(s, 'WAITING_FOR_SAFE_ACTION', 'Fome baixa; sem alimento seguro executável no inventário')
             return None
         if s.time >= 12000:
             beds=sorted((b for b in s.blocks if b.bed),
                         key=lambda b: math.dist((s.player.x,s.player.y,s.player.z),(b.x,b.y,b.z)))
-            if s.time>=12542 and s.dimension=='minecraft:overworld' and 'sleep' in s.capabilities:
+            if s.time>=12542 and s.dimension=='minecraft:overworld' and self.skills.available('sleep_in_bed',s.capabilities):
                 for bed in beds:
                     if math.dist((s.player.x,s.player.y,s.player.z),(bed.x,bed.y,bed.z))<=14:
-                        return self._start_sleep(s,bed,1200+self.motivation.values(s.world)['prudence'],
+                        command=self._start_sleep(s,bed,1200+self.motivation.values(s.world)['prudence'],
                                                  'Noite observada; cama vanilla visível no Overworld e ameaça imediata ausente.',
                                                  'IMMEDIATE')
+                        if command:return command
             reason='Crepúsculo: aguardando a janela de sono do jogo.' if s.time<12542 else 'Noite: nenhuma cama segura e alcançável observada; abrigo físico e combate ainda não executáveis.'
             if s.dimension!='minecraft:overworld': reason='Repouso em cama não disponível nesta dimensão; aguardando condição segura.'
             self._state(s, 'WAITING_FOR_SAFE_ACTION', reason)
             return None
-        offered = set()
-        for recipe in s.recipes:
-            subject = 'recipe:' + recipe.id
-            if subject in known or not (recipe.output_id.endswith('_planks') or recipe.output_id in ('minecraft:stick','minecraft:crafting_table')): continue
-            if s.player.inventory.get(recipe.input_id, 0) < recipe.input_count: continue
-            params = dict(target=dict(x=math.floor(s.player.x), y=math.floor(s.player.y), z=math.floor(s.player.z), id='minecraft:air'), recipe=recipe.model_dump())
-            gid = self.goals.ensure(s, subject, 'Testar a receita ' + recipe.id, 'Receita desbloqueada, recurso disponível e resultado ainda não verificado.',
-                                    110 + (personality['creativity']-90)*.2 + self.interests.score(s.world, self.interests.topic(recipe.id))*.05,
-                                    'craft', params, 'craft_planks')
-            self.goals.question(s, subject, f'A receita {recipe.id} produz {recipe.output_id} usando meu material?')
-            if gid: offered.add(gid)
+        if 'pickup' in s.capabilities:
+            reserve=sum(v for k,v in s.player.inventory.items() if any(f.id==k for f in s.player.foods) and self.foods.safe_id(k))
+            item=self.foods.choose(s.items,s.player,s.player.inventory,20) if reserve<3 else None
+            if item is None:
+                item=self.foods.choose_resource([i for i in s.items if i.item_id=='minecraft:wheat'],s.player,s.player.inventory)
+            if item is not None:
+                command=self._start_pickup(s,item,200,'Formar reserva pequena com alimento ou trigo observado.','SHORT_TERM')
+                if command:return command
+        offered=self._work_goals(s,personality)
         for b in sorted(candidates, key=lambda b: math.dist((s.player.x, s.player.y, s.player.z), (b.x, b.y, b.z))):
             if math.dist((s.player.x, s.player.y, s.player.z), (b.x, b.y, b.z)) > 14: continue
             if b.harvestable:
@@ -426,10 +437,10 @@ class CognitiveEngine:
                     self.goals.question(s, subject, question)
                     offered.add(gid)
                 continue
-            subject = ('log:' if b.log else 'observe:') + b.id
+            subject = f'resource:{b.id}:{b.x}:{b.y}:{b.z}' if b.log and b.id in known and need_wood else ('log:' if b.log else 'observe:') + b.id
             skill = 'investigate_log' if b.log else 'observe_block'
             if not self.skills.available(skill, s.capabilities): continue
-            target = b.model_dump(exclude={'log'})
+            target = b.model_dump(exclude={'log','harvestable','bed'})
             if self.m.rows("SELECT 1 FROM Experiments WHERE world=? AND target=? AND status IN ('failed','unverified')", (s.world, json.dumps(target, sort_keys=True))): continue
             question = f'O que consigo obter de {b.id}?' if b.log else f'Consigo confirmar de perto a presença de {b.id}?'
             gid = self.goals.ensure(s, subject, question, 'Novidade observada e habilidade disponível; segurança será revalidada ao caminhar.',
@@ -456,20 +467,7 @@ class CognitiveEngine:
             if not self.skills.available(goal['skill'], s.capabilities):
                 self.m.db.execute("UPDATE Goals SET status='blocked',reason='Habilidade não anunciada pelo mod' WHERE id=?", (goal['id'],))
                 continue
-            params = json.loads(goal['params'])
-            hypothesis = str(uuid4())
-            self.m.db.execute("INSERT OR IGNORE INTO Hypotheses VALUES(?,?,?,?,'hypothesis','[]')",
-                              (hypothesis, s.world, goal['description'], 'O experimento pode produzir evidência para esta pergunta.'))
-            hypothesis = self.m.rows('SELECT id FROM Hypotheses WHERE world=? AND question=?', (s.world, goal['description']))[0]['id']
-            phase = 'craft' if goal['kind']=='craft' else 'explore' if goal['kind']=='explore' else 'approach'
-            exp = dict(id=str(uuid4()), world=s.world, session=str(s.session), hypothesis=hypothesis,
-                       target=json.dumps(params['target'], sort_keys=True), phase=phase, status='running', evidence_ids='[]')
-            self.m.db.execute('INSERT INTO Experiments VALUES(:id,:world,:session,:hypothesis,:target,:phase,:status,:evidence_ids)', exp)
-            self.m.db.execute('INSERT INTO ExperimentGoals VALUES(?,?)', (exp['id'], goal['id']))
-            self.m.db.execute("UPDATE Goals SET status='running' WHERE id=?", (goal['id'],))
-            self.m.db.execute('UPDATE Interests SET goals=? WHERE world=? AND topic=?',
-                              (json.dumps([goal['id']]), s.world, self.interests.topic(params['target']['id'])))
-            return self._command(s, exp, phase, **({'recipe': params['recipe']} if phase == 'craft' else {}))
+            return self._start_planned(s,goal)
         if 'pickup' in s.capabilities:
             resource = self.foods.choose_resource(s.items, s.player, s.player.inventory)
             if resource is not None:
@@ -482,6 +480,51 @@ class CognitiveEngine:
         if 'explore' not in s.capabilities: reason += ' Instale o mod 0.2 para anunciar exploração e crafting.'
         self._state(s, 'WAITING_FOR_SAFE_ACTION', reason)
         return None
+
+    def _work_goals(self,s,personality):
+        offered=set()
+        for proposal in self.crafting.proposals(s,personality):
+            gid=self.goals.ensure(s,**proposal)
+            if gid:
+                self.goals.question(s,proposal['subject'],proposal['description']+' com verificação do resultado?')
+                offered.add(gid)
+        return offered
+
+    def _start_planned(self,s,goal):
+        params=json.loads(goal['params'])
+        hypothesis=str(uuid4())
+        self.m.db.execute("INSERT OR IGNORE INTO Hypotheses VALUES(?,?,?,?,'hypothesis','[]')",
+                          (hypothesis,s.world,goal['description'],'O experimento pode produzir evidência para este objetivo.'))
+        hypothesis=self.m.rows('SELECT id FROM Hypotheses WHERE world=? AND question=?',(s.world,goal['description']))[0]['id']
+        phase=goal['kind'] if goal['kind'] in ('craft','craft_table','place','explore') else 'approach'
+        exp=dict(id=str(uuid4()),world=s.world,session=str(s.session),hypothesis=hypothesis,
+                 target=json.dumps(params['target'],sort_keys=True),phase=phase,status='running',evidence_ids='[]')
+        self.m.db.execute('INSERT INTO Experiments VALUES(:id,:world,:session,:hypothesis,:target,:phase,:status,:evidence_ids)',exp)
+        self.m.db.execute('INSERT INTO ExperimentGoals VALUES(?,?)',(exp['id'],goal['id']))
+        self.m.db.execute("UPDATE Goals SET status='running' WHERE id=?",(goal['id'],))
+        extra={k:params[k] for k in ('recipe','placement') if k in params}
+        return self._command(s,exp,phase,**extra)
+
+    def _start_eat(self,s,food):
+        prefix=f'meal:{s.day}:{food["id"]}:'
+        completed=self.m.rows("SELECT count(*) n FROM GoalPlans p JOIN Goals g ON g.id=p.goal_id "
+                              "WHERE p.world=? AND p.subject LIKE ? AND g.status='completed'",(s.world,prefix+'%'))[0]['n']
+        target=dict(x=math.floor(s.player.x),y=math.floor(s.player.y),z=math.floor(s.player.z),id=food['id'])
+        gid=self.goals.ensure(s,prefix+str(completed),'Comer alimento para recuperar minhas reservas',
+                              'Fome baixa observada e alimento seguro no inventário.',1000+(20-s.player.food)*10,
+                              'survival',{'target':target,'food':food},'eat_food','IMMEDIATE')
+        goal=next((g for g in self.goals.rows(s.world) if g['id']==gid and g['status']=='pending'),None)
+        if not goal:return None
+        hypothesis=str(uuid4())
+        self.m.db.execute("INSERT OR IGNORE INTO Hypotheses VALUES(?,?,?,?,'hypothesis','[]')",
+                          (hypothesis,s.world,goal['description'],'Consumir o alimento deve elevar a fome e reduzir sua quantidade no inventário.'))
+        hypothesis=self.m.rows('SELECT id FROM Hypotheses WHERE world=? AND question=?',(s.world,goal['description']))[0]['id']
+        exp=dict(id=str(uuid4()),world=s.world,session=str(s.session),hypothesis=hypothesis,
+                 target=json.dumps(target,sort_keys=True),phase='eat',status='running',evidence_ids='[]')
+        self.m.db.execute('INSERT INTO Experiments VALUES(:id,:world,:session,:hypothesis,:target,:phase,:status,:evidence_ids)',exp)
+        self.m.db.execute('INSERT INTO ExperimentGoals VALUES(?,?)',(exp['id'],gid))
+        self.m.db.execute("UPDATE Goals SET status='running' WHERE id=?",(gid,))
+        return self._command(s,exp,'eat',food=food)
 
     def _start_pickup(self, s, item, priority, reason, category):
         data = item.model_dump(mode='json')

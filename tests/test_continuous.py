@@ -219,7 +219,7 @@ class ContinuousTest(unittest.TestCase):
                         blocks=[bed],capabilities=caps,time=13000)['command']
         self.assertEqual(sleep['action'],'sleep')
         ev=dict(target={k:sleep['target'][k] for k in ('x','y','z')},server_verified=True,rest_completed=True,
-                bed_block='minecraft:red_bed',time_before=13000,time=0,sleep_count_before=2,sleep_count_after=3)
+                bed_block='minecraft:red_bed',time_before=13000,time=24000,sleep_count_before=2,sleep_count_after=3)
         self.step([self.success(sleep,ev)],blocks=[],capabilities=caps,time=0)
         self.assertEqual(len(self.m.rows("SELECT * FROM Events WHERE type='slept' AND verified=1")),1)
 
@@ -230,7 +230,7 @@ class ContinuousTest(unittest.TestCase):
         sleep=self.step([self.success(approach,dict(target={k:approach['target'][k] for k in ('x','y','z')},in_reach=True))],
                         blocks=[bed],capabilities=caps,time=13000)['command']
         ev=dict(target={k:sleep['target'][k] for k in ('x','y','z')},server_verified=True,rest_completed=True,
-                bed_block='minecraft:red_bed',time_before=13000,time=0,sleep_count_before=2,sleep_count_after=2)
+                bed_block='minecraft:red_bed',time_before=13000,time=24000,sleep_count_before=2,sleep_count_after=2)
         self.step([self.success(sleep,ev)],blocks=[],capabilities=caps,time=0)
         self.assertFalse(self.m.rows("SELECT * FROM Events WHERE type='slept' AND verified=1"))
 

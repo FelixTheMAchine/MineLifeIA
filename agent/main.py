@@ -11,6 +11,10 @@ from agent.journal.writer import JournalWriter
 from agent.engine import CognitiveEngine
 from agent.protocol import Step
 from agent.llm import LanguageAdvisor
+from agent.skills import SkillRegistry
+
+BRIDGE_FEATURES = ['workstations-v1']
+BRIDGE_ACTIONS = sorted({action for skill in SkillRegistry.skills.values() for action in skill.actions})
 
 
 def create_app(root=ROOT, config=None):
@@ -50,12 +54,13 @@ def create_app(root=ROOT, config=None):
 
     @app.get('/health')
     async def health():
-        return {'service': 'MineLife AI', 'version': '0.2.0', 'protocol': 1, 'auto_publish': False}
+        return {'service': 'MineLife AI', 'version': '0.2.0', 'protocol': 1,
+                'features': BRIDGE_FEATURES, 'auto_publish': False}
 
     @app.get('/bridge/handshake')
     async def handshake():
         return {'protocol': 1, 'version': '0.2.0', 'transport': 'HTTP/1.1',
-                'heartbeat_ms': 250, 'lease_ms': 3000, 'actions': ['approach','break','collect','observe','explore','craft']}
+                'features': BRIDGE_FEATURES, 'heartbeat_ms': 250, 'lease_ms': 3000, 'actions': BRIDGE_ACTIONS}
 
     @app.get('/', response_class=HTMLResponse)
     async def index():

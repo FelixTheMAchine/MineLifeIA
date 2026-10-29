@@ -3,6 +3,7 @@ package ai.minelife;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.item.ItemStack;
 import net.minecraft.registry.Registries;
@@ -14,22 +15,24 @@ import java.util.concurrent.CompletableFuture;
 /** Consumes an existing food stack with native input; main-inventory items use a reversible SWAP. */
 final class EatingController {
     private final MinecraftClient mc;
-    private int sourceSlot = -1, hotbarSlot = -1, previousSlot = -1, sourceFoodCount, ticks, sampleCooldown, restoreTicks;
+    private int sourceSlot = -1, hotbarSlot = -1, previousSlot = -1, sourceFoodCount, ticks, sampleCooldown, restoreTicks, emptyTicks;
     private String itemId, displacedId;
     private int displacedCount;
     private boolean needsSwap, swapped, restoring;
     private JsonObject consumedEvidence;
     private CompletableFuture<JsonObject> before, after, restoredSnapshot;
+    private ClientPlayerEntity owner;
+    private ItemStack sourceStack=ItemStack.EMPTY, displacedStack=ItemStack.EMPTY;
 
     EatingController(MinecraftClient mc) { this.mc = mc; }
 
     JsonArray offers() {
         JsonArray values = new JsonArray();
         if (mc.player == null) return values;
-        for (int i = 0; i < mc.player.getInventory().size(); i++) {
+        for (int i = 0; i < 36; i++) {
             ItemStack stack = mc.player.getInventory().getStack(i);
             var food = stack.get(DataComponentTypes.FOOD);
-            if (stack.isEmpty() || food == null || food.nutrition() <= 0) continue;
+            if (stack.isEmpty() || food == null || food.nutrition() <= 0 || food.nutrition()>20) continue;
             JsonObject offer = new JsonObject();
             offer.addProperty("id", Registries.ITEM.getId(stack.getItem()).toString());
             offer.addProperty("slot", i); offer.addProperty("count", stack.getCount());
@@ -43,18 +46,21 @@ final class EatingController {
         if (mc.currentScreen != null || mc.player.currentScreenHandler != mc.player.playerScreenHandler) return "inventory_busy";
         if (mc.player.getHungerManager().getFoodLevel() >= 20) return "not_hungry";
         sourceSlot = requested.get("slot").getAsInt();
-        if (sourceSlot < 0 || sourceSlot >= mc.player.getInventory().size()) return "invalid_food_slot";
+        if (sourceSlot < 0 || sourceSlot >= 36) return "invalid_food_slot";
         ItemStack stack = mc.player.getInventory().getStack(sourceSlot);
         var component = stack.get(DataComponentTypes.FOOD);
         itemId = requested.get("id").getAsString();
         if (stack.isEmpty() || component == null || component.nutrition() <= 0
+                || !FoodConsumptionEvidence.allowed(itemId)
                 || !Registries.ITEM.getId(stack.getItem()).toString().equals(itemId)) return "food_changed";
+        owner=mc.player;sourceStack=stack.copy();
         previousSlot = mc.player.getInventory().selectedSlot;
         sourceFoodCount = stack.getCount();
         hotbarSlot = sourceSlot < 9 ? sourceSlot : previousSlot;
         before = snapshot(); ticks = 0; sampleCooldown = 0;
         if (sourceSlot >= 9) {
             ItemStack displaced = mc.player.getInventory().getStack(hotbarSlot);
+            displacedStack=displaced.copy();
             displacedId = displaced.isEmpty() ? "" : Registries.ITEM.getId(displaced.getItem()).toString();
             displacedCount = displaced.getCount();
             needsSwap = displaced.isEmpty() || !displacedId.equals(itemId) || displaced.get(DataComponentTypes.FOOD) == null;
@@ -65,6 +71,7 @@ final class EatingController {
 
     JsonObject tick() {
         if (sourceSlot < 0) return error("eat_not_started");
+        if (mc.player!=owner) return error("player_changed");
         if (mc.currentScreen != null || mc.player.currentScreenHandler != mc.player.playerScreenHandler) return error("inventory_changed");
         if (++ticks > 220) return error(restoring ? "inventory_restore_timeout" : "eat_timeout");
         if (needsSwap && !swapped && !restoring) {
@@ -75,6 +82,7 @@ final class EatingController {
         }
         if (restoring) return tickRestore();
         ItemStack stack = mc.player.getInventory().getStack(hotbarSlot);
+        emptyTicks=stack.isEmpty()?emptyTicks+1:0;
         boolean slotChanged = !stack.isEmpty() && !Registries.ITEM.getId(stack.getItem()).toString().equals(itemId);
         if (slotChanged) return error("food_slot_replaced");
         if (before == null || !before.isDone()) return null;
@@ -104,7 +112,8 @@ final class EatingController {
         }
         if (proof == FoodConsumptionEvidence.Result.WRONG_AMOUNT) return error("food_consumption_delta_invalid");
         if (proof == FoodConsumptionEvidence.Result.NO_NUTRITION) return error("food_effect_unverified");
-        if (stack.isEmpty()) return error("food_disappeared_without_server_consumption");
+        // The client can consume the last item before a queued server sample catches up.
+        if (!FoodConsumptionEvidence.awaitingConfirmation(proof,emptyTicks)) return error("food_disappeared_without_server_consumption");
         after = null;
         return null;
     }
@@ -127,19 +136,22 @@ final class EatingController {
         ItemStack hotbar = mc.player.getInventory().getStack(hotbarSlot);
         int consumedCount = sourceFoodCount - 1;
         boolean sourceMatchesFood = consumedCount == 0 ? source.isEmpty() :
-                !source.isEmpty() && Registries.ITEM.getId(source.getItem()).toString().equals(itemId) && source.getCount() == consumedCount;
+                ItemStack.areItemsAndComponentsEqual(source,sourceStack) && source.getCount() == consumedCount;
         boolean hotbarMatches = displacedId.isEmpty() ? hotbar.isEmpty() :
-                !hotbar.isEmpty() && Registries.ITEM.getId(hotbar.getItem()).toString().equals(displacedId) && hotbar.getCount() == displacedCount;
+                ItemStack.areItemsAndComponentsEqual(hotbar,displacedStack) && hotbar.getCount() == displacedCount;
         return sourceMatchesFood && hotbarMatches;
     }
 
     private boolean canReverseSwap() {
-        if (mc.player == null || sourceSlot < 9 || hotbarSlot < 0) return false;
+        if (mc.player == null || mc.player!=owner || sourceSlot < 9 || hotbarSlot < 0
+                || mc.player.currentScreenHandler!=mc.player.playerScreenHandler
+                || !mc.player.playerScreenHandler.getCursorStack().isEmpty()) return false;
         ItemStack source = mc.player.getInventory().getStack(sourceSlot);
         ItemStack hotbar = mc.player.getInventory().getStack(hotbarSlot);
         boolean sourceIsDisplaced = displacedId.isEmpty() ? source.isEmpty() :
-                !source.isEmpty() && Registries.ITEM.getId(source.getItem()).toString().equals(displacedId) && source.getCount() == displacedCount;
-        boolean hotbarIsFoodOrEmpty = hotbar.isEmpty() || Registries.ITEM.getId(hotbar.getItem()).toString().equals(itemId);
+                ItemStack.areItemsAndComponentsEqual(source,displacedStack) && source.getCount() == displacedCount;
+        boolean hotbarIsFoodOrEmpty = hotbar.isEmpty() || ItemStack.areItemsAndComponentsEqual(hotbar,sourceStack)
+                && (hotbar.getCount()==sourceFoodCount || hotbar.getCount()==sourceFoodCount-1);
         return sourceIsDisplaced && hotbarIsFoodOrEmpty && !(source.isEmpty() && hotbar.isEmpty());
     }
 
@@ -177,11 +189,17 @@ final class EatingController {
 
     void cancel() {
         if (mc.options != null) mc.options.useKey.setPressed(false);
-        if (swapped && canReverseSwap()) clickSwap(sourceSlot, hotbarSlot);
-        if (mc.player != null && previousSlot >= 0 && previousSlot <= 8) mc.player.getInventory().selectedSlot = previousSlot;
-        if (mc.interactionManager != null && mc.player != null) mc.interactionManager.stopUsingItem(mc.player);
-        sourceSlot = hotbarSlot = previousSlot = -1; sourceFoodCount = 0; itemId = displacedId = null; displacedCount = 0;
-        ticks = sampleCooldown = restoreTicks = 0; needsSwap = swapped = restoring = false;
-        consumedEvidence = null; before = after = restoredSnapshot = null;
+        try {
+            // clickSlot predicts the SWAP immediately, even if the next controller tick never runs.
+            if (needsSwap && canReverseSwap()) clickSwap(sourceSlot, hotbarSlot);
+        } finally {
+            if (mc.player != null && mc.player==owner && previousSlot >= 0 && previousSlot <= 8) mc.player.getInventory().selectedSlot = previousSlot;
+            sourceSlot = hotbarSlot = previousSlot = -1; sourceFoodCount = 0; itemId = displacedId = null; displacedCount = 0;
+            ticks = sampleCooldown = restoreTicks = emptyTicks = 0; needsSwap = swapped = restoring = false;
+            consumedEvidence = null; before = after = restoredSnapshot = null;
+            try {
+                if (mc.interactionManager != null && mc.player != null && mc.player==owner) mc.interactionManager.stopUsingItem(mc.player);
+            } finally { owner=null;sourceStack=displacedStack=ItemStack.EMPTY; }
+        }
     }
 }

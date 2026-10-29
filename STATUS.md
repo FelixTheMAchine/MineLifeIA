@@ -1,5 +1,38 @@
 # MineLife AI — status 0.2.0 — 2026-10-29
 
+## Estado corrente — cadeia de recursos, bancada e fabricação
+
+Continuação sobre `4b8b304`, preservando os avanços posteriores à base `5ec88a6`. Checkpoint local `safety/pre-workstations-20261029` criado antes da edição. O projeto não foi reiniciado.
+
+- `agent/crafting.py` integra necessidades de estoque ao ciclo existente: reposição limitada de troncos conhecidos, tábuas, bancada, gravetos, ferramentas e pão a partir de trigo observado. Receitas precisam ser desbloqueadas/anunciadas pelo mod; após sucesso, o planejador escolhe outra oportunidade. Receita conhecida só é repetida enquanto há demanda, mantendo cooldown e orçamento de falhas.
+- Novo `BlockPlacementController` coloca bancada/fornalha por `interactBlock`, com item existente, apoio sólido, célula livre e alcance real. O planejador escolhe bancada; a colocação de fornalha não tem ainda objetivo operacional. HotbarLease usa SWAP nativo em slot vazio e restaura somente estado compatível. Resultado exige bloco no servidor, item consumido e USED +1.
+- `CraftingController` ampliado: aproximação da bancada, abertura da tela nativa, RecipeMatcher com todos os ingredientes, recipe book, recolhimento de uma produção e fechamento seguro. Receitas 3×3 incluem ferramentas de madeira/pedra, pão, fornalha e baú. Resultado exige consumo exato dos ingredientes, saída e CRAFTED; interface da bancada também é conferida no servidor. Ferramentas fabricadas ainda não são selecionadas automaticamente para mineração geral.
+- Memória de estação usa mundo/dimensão e coordenadas. Uma colocação próxima pode motivar revisita para revalidar presença e rota; uma lembrança distante não impede preparar outra bancada necessária. Não há navegação de longa distância à base.
+- Alimentação tem prioridade mesmo com limite de uma meta ativa. Tentativas malsucedidas da mesma refeição agora preservam cooldown/orçamento, em vez de gerar novas metas infinitas. Trigo observado pode ser recolhido antes de haver três unidades; pão fabricado e refeição consumida produzem experiências distintas.
+- Corrigidas leituras assíncronas de sono que substituíam a confirmação ainda pendente; a prova usa tempo absoluto crescente. Corrigida maturidade de beterraba pelo método específico de CropBlock. Pickup aguarda baseline do servidor antes de iniciar movimento e considera apenas slots de armazenamento ao avaliar espaço.
+- Alimentação tolera a previsão do cliente que esvazia a última unidade antes do snapshot. Cancelamento após SWAP, inclusive antes do tick seguinte, tenta restauração condicionada a componentes/quantidade e identidade do jogador. Teclas e controladores são liberados mesmo se outro controlador falhar na restauração.
+- F8/F9/F10 preservadas, inclusive nas telas de bancada/sono pertencentes à ação. Interface externa, perda de foco, perigo e desconexão continuam interrompendo o controle. Handshake e health anunciam `workstations-v1`; mod e script recusam reutilizar backend antigo incompatível, com diagnóstico específico.
+- Diário e filosofia recebem a colocação verificada como mudança de lugar, sem alegar abrigo ou uso futuro já realizado. Formato histórico e entradas anteriores permanecem intactos. Não houve alteração do esquema SQLite; os testes usam bancos temporários.
+
+### Verificação desta etapa
+
+- `scripts/Test.ps1`: **71 testes Python passaram**; build Fabric **passou**, com **136 assertions Java** (incluem 100 consultas repetidas ao mesmo future pendente, não 136 cenários distintos).
+- Contrato executou HttpClient Java → FastAPI/h11 em socket loopback: handshake, extensão de compatibilidade, observação com ingredientes/estação e comando `craft_table`, sem Upgrade. Outro teste de transporte confirmou ack e rejeição de sequência repetida.
+- Testes adicionais cobrem cadeia tábuas→bancada→colocação→graveto→picareta, pão→refeição, prioridade da fome, falhas limitadas, cancelamento/reinício sem replay, ingredientes e estatísticas ausentes, estação incorreta, isolamento por mundo e proveniência do diário. Usam mensagens sintéticas; não comprovam física, GUI ou gameplay.
+- JAR gerado: `mod/build/libs/minelife-ai-0.2.0.jar`. **Não instalado nesta etapa. Minecraft não foi aberto e nenhuma ação real foi executada.** Save, banco privado e diários reais não foram usados como fixtures nem publicados.
+
+### Limites e próxima continuidade
+
+- Crafting aceita uma lista vanilla de receitas desbloqueadas. Precisa de cursor/grade livres e um slot principal vazio. Para colocar material fora do hotbar, requer um slot vazio no hotbar. Organização geral de inventário permanece pendente.
+- Não há abrigo por blueprint, caça, cozinhar/combustível na fornalha, uso de baús, seleção automática de ferramentas, armaduras, combate/fuga, plantio/replantio ou relações MCA. Fabricar os itens não equivale a executar essas habilidades.
+- Navegação continua local; sem comida, cama, rota ou recursos viáveis, a espera é explícita. Não se afirma sobrevivência indefinida.
+- Próximas dependências: seleção e prova de uso de ferramentas; inventário/fornalha com estados e retomada; blueprint pequeno com material, faces alcançáveis, colocação por etapa e prova do abrigo completo. A validação gráfica dessas capacidades permanece registrada, sem pedir teste manual nesta sessão.
+- Publicação automática e pública de diários continuam desligadas. Sincronização de código deve passar pela auditoria do index; nenhum dado privado deve acompanhá-la.
+
+## Histórico das etapas anteriores
+
+Os registros abaixo descrevem o estado **à época de cada etapa**, inclusive limitações depois superadas. O estado atual e os resultados desta execução são os da seção acima.
+
 ## Continuação — repouso noturno em cama observada
 
 - O sensor local anuncia camas vanilla que estejam carregadas e visíveis. No Overworld durante a noite, com controle ativo, sem ameaça próxima e rota local, o agente pode aproximar-se e usar uma cama existente pela interação normal do cliente.

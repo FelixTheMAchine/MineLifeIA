@@ -36,6 +36,11 @@ class TransportTest(unittest.TestCase):
                     self.assertEqual(client.get('/health').status_code, 200)
                     self.assertEqual(client.get('/api/state').status_code, 401)
                     headers = {'Authorization': 'Bearer ' + 'test-secret-' * 4}
+                    handshake = client.get('/bridge/handshake', headers=headers)
+                    self.assertEqual(handshake.status_code, 200)
+                    self.assertIn('workstations-v1', handshake.json()['features'])
+                    self.assertTrue({'place', 'craft_table', 'eat', 'pickup', 'harvest', 'sleep'} <= set(handshake.json()['actions']))
+                    self.assertIn('workstations-v1', client.get('/health').json()['features'])
                     body = dict(protocol=1, session=str(uuid4()), world='c' * 64,
                                 dimension='minecraft:overworld', seq=1, day=1, time=2000,
                                 active=True, armed=True, results=[],

@@ -20,10 +20,12 @@ final class RestController {
     private final Navigator navigator;
     private BlockPos bed;
     private CompletableFuture<JsonObject> before, after;
+    private final PendingServerRead<JsonObject> confirmation=new PendingServerRead<>();
     private boolean interacted;
     private int ticks, sampleCooldown;
 
     RestController(MinecraftClient mc, Navigator navigator) { this.mc=mc; this.navigator=navigator; }
+    boolean ownsScreen() { return bed!=null && interacted && mc.currentScreen instanceof net.minecraft.client.gui.screen.SleepingChatScreen; }
 
     String begin(BlockPos target) {
         cancel();
@@ -60,7 +62,7 @@ final class RestController {
         }
         if (++sampleCooldown<10) return null;
         sampleCooldown=0;
-        after=snapshot();
+        after=confirmation.request(this::snapshot);
         if (!after.isDone()) return null;
         if (after.isCompletedExceptionally()) return error("server_evidence_unavailable_after_rest");
         JsonObject first=before.join(),last=after.join();
@@ -74,13 +76,14 @@ final class RestController {
         }
         int time=Math.floorMod(last.get("time").getAsLong(),24000);
         if (time<12000) return error("day_transition_without_sleep_stat");
-        after=null;
+        after=null;confirmation.clear();
         return null;
     }
 
     private CompletableFuture<JsonObject> snapshot() {
         CompletableFuture<JsonObject> result=new CompletableFuture<>();
         var server=mc.getServer();var uuid=mc.player.getUuid();var dimension=mc.world.getRegistryKey();
+        BlockPos capturedBed=bed.toImmutable();
         server.execute(()->{
             try {
                 ServerPlayerEntity player=server.getPlayerManager().getPlayer(uuid);
@@ -89,7 +92,7 @@ final class RestController {
                 JsonObject value=new JsonObject();value.addProperty("server_verified",true);
                 value.addProperty("time",world.getTimeOfDay());
                 value.addProperty("sleep_count",player.getStatHandler().getStat(Stats.CUSTOM.getOrCreateStat(Stats.SLEEP_IN_BED)));
-                value.addProperty("bed_block",Registries.BLOCK.getId(world.getBlockState(bed).getBlock()).toString());
+                value.addProperty("bed_block",Registries.BLOCK.getId(world.getBlockState(capturedBed).getBlock()).toString());
                 result.complete(value);
             }catch(Exception e){result.completeExceptionally(e);}
         });
@@ -97,5 +100,13 @@ final class RestController {
     }
 
     private static JsonObject error(String reason){JsonObject value=new JsonObject();value.addProperty("error",reason);return value;}
-    void cancel(){navigator.release();bed=null;before=after=null;interacted=false;ticks=sampleCooldown=0;}
+    void cancel(){
+        try {
+            if(bed!=null && interacted && mc.player!=null && mc.player.isSleeping() && mc.getNetworkHandler()!=null)
+                mc.getNetworkHandler().sendPacket(new net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket(mc.player,
+                        net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket.Mode.STOP_SLEEPING));
+        } finally {
+            navigator.release();bed=null;before=after=null;confirmation.clear();interacted=false;ticks=sampleCooldown=0;
+        }
+    }
 }

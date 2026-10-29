@@ -40,10 +40,11 @@ final class PickupController {
     JsonObject tick(BlockPos target) {
         if (entityId==null) return error("pickup_not_started");
         if (++ticks>360) return error("pickup_timeout");
-        int path=navigator.tick();
-        if (path<0) return error("path_obstructed");
         if (before==null || !before.isDone()) return null;
         if (before.isCompletedExceptionally()) return error("server_evidence_unavailable_before_pickup");
+        if (!before.join().get("entity_present").getAsBoolean()) return error("item_missing_before_pickup");
+        int path=navigator.tick();
+        if (path<0) return error("path_obstructed");
         if (++sampleCooldown<5) return null;
         sampleCooldown=0;
         if (after==null) after=snapshot();
@@ -75,6 +76,7 @@ final class PickupController {
     private CompletableFuture<JsonObject> snapshot() {
         CompletableFuture<JsonObject> result=new CompletableFuture<>();
         var server=mc.getServer();var uuid=mc.player.getUuid();var dimension=mc.world.getRegistryKey();UUID item=entityId;
+        String capturedItemId=itemId;
         server.execute(()->{
             try {
                 ServerPlayerEntity player=server.getPlayerManager().getPlayer(uuid);
@@ -84,8 +86,8 @@ final class PickupController {
                 ev.add("inventory",inventory(player));
                 var found=world.getEntity(item);
                 ev.addProperty("entity_present",found instanceof ItemEntity drop && !drop.getStack().isEmpty()
-                        && Registries.ITEM.getId(drop.getStack().getItem()).toString().equals(itemId));
-                int count=found instanceof ItemEntity drop && Registries.ITEM.getId(drop.getStack().getItem()).toString().equals(itemId)
+                        && Registries.ITEM.getId(drop.getStack().getItem()).toString().equals(capturedItemId));
+                int count=found instanceof ItemEntity drop && Registries.ITEM.getId(drop.getStack().getItem()).toString().equals(capturedItemId)
                         ?drop.getStack().getCount():0;
                 ev.addProperty("entity_count",count);result.complete(ev);
             }catch(Exception e){result.completeExceptionally(e);}
@@ -94,7 +96,7 @@ final class PickupController {
     }
 
     private boolean canAccept(ItemStack incoming) {
-        for(int i=0;i<mc.player.getInventory().size();i++){
+        for(int i=0;i<36;i++){
             ItemStack current=mc.player.getInventory().getStack(i);
             if(current.isEmpty() || ItemStack.areItemsAndComponentsEqual(current,incoming)&&current.getCount()<current.getMaxCount())return true;
         }

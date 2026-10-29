@@ -87,6 +87,8 @@ class JournalWriter:
             return 'Esta resposta observada me deixa uma nova margem para investigar, sem transformar possibilidades em fatos.'
         if kind == 'crafted':
             return 'A transformação dos itens e a estatística do servidor sustentam este resultado; o que construirei depois ainda está em aberto.'
+        if kind == 'placed':
+            return 'Escolhi um espaço e coloquei ali uma estação. Registrei a mudança no mundo e o material gasto; o próximo uso ainda precisa acontecer.'
         if kind == 'ate':
             return 'A alteração observada na fome confirmou o efeito desta refeição. Precisei cuidar de uma necessidade imediata antes de escolher o próximo caminho.'
         if kind == 'crop_harvested':

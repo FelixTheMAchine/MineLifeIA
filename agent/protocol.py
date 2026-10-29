@@ -1,6 +1,6 @@
-from typing import Literal
+from typing import Literal, Annotated
 from uuid import UUID
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 
 class StrictModel(BaseModel):
@@ -28,7 +28,7 @@ class Player(StrictModel):
     food: int = Field(ge=0, le=20)
     danger: bool
     inventory: dict[str, int]
-    foods: list['FoodOffer'] = Field(default_factory=list, max_length=9)
+    foods: list['FoodOffer'] = Field(default_factory=list, max_length=36)
 
 
 class FoodOffer(StrictModel):
@@ -63,9 +63,34 @@ class Frontier(Pos):
 class RecipeOffer(StrictModel):
     id: str = Field(pattern=r'^minecraft:[a-z0-9_/]+$', max_length=128)
     input_id: str = Field(pattern=r'^minecraft:[a-z0-9_]+$', max_length=128)
-    input_count: int = Field(default=1, ge=1, le=4)
+    input_count: int = Field(default=1, ge=1, le=9)
     output_id: str = Field(pattern=r'^minecraft:[a-z0-9_]+$', max_length=128)
     output_count: int = Field(ge=1, le=64)
+    inputs: dict[Annotated[str,Field(pattern=r'^minecraft:[a-z0-9_]+$',max_length=128)],
+                 Annotated[int,Field(strict=True,ge=1,le=9)]] = Field(default_factory=dict, max_length=9)
+    grid: Literal[2, 3] = 2
+    station: Pos | None = None
+
+    @model_validator(mode='after')
+    def validate_recipe(self):
+        if self.inputs and (sum(self.inputs.values())>self.grid*self.grid
+                            or self.inputs.get(self.input_id)!=self.input_count or self.output_id in self.inputs):
+            raise ValueError('Alocação de ingredientes inválida')
+        if self.grid==3 and (not self.inputs or self.station is None):
+            raise ValueError('Receita 3x3 exige estação e ingredientes explícitos')
+        if self.grid==2 and self.station is not None:
+            raise ValueError('Receita 2x2 não deve anunciar bancada')
+        return self
+
+
+class PlacementSpot(Pos):
+    support: Pos
+
+    @model_validator(mode='after')
+    def validate_support(self):
+        if (self.support.x,self.support.y+1,self.support.z)!=(self.x,self.y,self.z):
+            raise ValueError('Apoio deve estar imediatamente abaixo da posição')
+        return self
 
 
 class Step(StrictModel):
@@ -90,3 +115,4 @@ class Step(StrictModel):
     entities: list[str] = Field(default_factory=list, max_length=32)
     recipes: list[RecipeOffer] = Field(default_factory=list, max_length=32)
     items: list[ItemObservation] = Field(default_factory=list, max_length=24)
+    placement_spots: list[PlacementSpot] = Field(default_factory=list, max_length=12)

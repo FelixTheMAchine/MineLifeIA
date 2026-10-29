@@ -28,6 +28,11 @@ class PhilosophicalReflectionEngine:
             question = f"Que novas possibilidades posso investigar com o resultado observado da receita {data['recipe']}?"
             interpretation = f"A receita {data['recipe']} foi observada nesta sessão; qualquer uso posterior do resultado ainda depende de outra ação verificada."
             importance, novelty = .78, .85
+        elif event['type'] == 'placed' and data.get('after_block'):
+            theme = 'changing-a-place'
+            question = f"Coloquei {data['after_block']} neste lugar. Como essa alteração observada pode mudar os projetos que consigo tentar aqui?"
+            interpretation = 'Confirmei uma estação colocada e um recurso consumido. Isso cria uma possibilidade de uso; fabricar algo ou transformar o local em abrigo ainda exige outras evidências.'
+            importance, novelty = .84, .85
         elif event['type'] == 'region_reached':
             theme = 'place'
             position = data.get('position', {})

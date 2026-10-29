@@ -65,6 +65,9 @@ public final class MineLifeClient implements ClientModInitializer {
     private EatingController eating;
     private PickupController pickup;
     private RestController rest;
+    private BlockPlacementController placement;
+    private JsonArray cachedPlacements=new JsonArray();
+    private boolean held8,held9,held10;
     private String status = "Desativada · F8";
     private long seq, ticks, lastReply, lastPoll;
     private CompletableFuture<HttpResponse<String>> request;
@@ -78,10 +81,11 @@ public final class MineLifeClient implements ClientModInitializer {
 
     @Override public void onInitializeClient() {
         navigator = new Navigator(mc);
-        crafting = new CraftingController(mc);
+        crafting = new CraftingController(mc,navigator);
         eating = new EatingController(mc);
         pickup = new PickupController(mc, navigator);
         rest = new RestController(mc,navigator);
+        placement=new BlockPlacementController(mc,navigator);
         toggle = key("Ativar/desativar MineLife AI", GLFW.GLFW_KEY_F8);
         pause = key("Pausar/retomar MineLife AI", GLFW.GLFW_KEY_F9);
         emergency = key("Emergencia MineLife AI", GLFW.GLFW_KEY_F10);
@@ -90,7 +94,10 @@ public final class MineLifeClient implements ClientModInitializer {
             token = JsonParser.parseString(Files.readString(config)).getAsJsonObject().get("token").getAsString();
             if (token.length() < 32) throw new IllegalArgumentException("token curto");
         } catch (Exception e) { token = null; status = "Instale a configuracao local"; LOG.warn("MineLife: configuracao local ausente/invalida."); }
-        ClientTickEvents.END_CLIENT_TICK.register(client -> tick());
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            try { tick(); }
+            catch(Exception e) { stop("Falha local · F8",true); LOG.warn("MineLife: tick interrompido ({})",e.getClass().getSimpleName()); }
+        });
         HudRenderCallback.EVENT.register((draw, counter) -> {
             if (mc.player != null) draw.drawTextWithShadow(mc.textRenderer, "MineLife AI: " + status, 8, 8, active ? 0x88ff99 : 0xffcc77);
         });
@@ -117,17 +124,26 @@ public final class MineLifeClient implements ClientModInitializer {
                 dimension = currentDimension;
             } catch (Exception e) { status = "Nao foi possivel identificar o mundo"; return; }
         }
-        if (emergency.wasPressed()) {
+        boolean ownedScreen=crafting.ownsScreen()||rest.ownsScreen();
+        boolean raw8=InputUtil.isKeyPressed(mc.getWindow().getHandle(),GLFW.GLFW_KEY_F8);
+        boolean raw9=InputUtil.isKeyPressed(mc.getWindow().getHandle(),GLFW.GLFW_KEY_F9);
+        boolean raw10=InputUtil.isKeyPressed(mc.getWindow().getHandle(),GLFW.GLFW_KEY_F10);
+        boolean extra8=ownedScreen&&raw8&&!held8,extra9=ownedScreen&&raw9&&!held9,extra10=ownedScreen&&raw10&&!held10;
+        held8=raw8;held9=raw9;held10=raw10;
+        if (emergency.wasPressed() || extra10) {
             handleKey(10);
             while(toggle.wasPressed()) { }
             while(pause.wasPressed()) { }
         } else {
-            while (toggle.wasPressed()) handleKey(8);
-            while (pause.wasPressed()) handleKey(9);
+            boolean togglePressed=toggle.wasPressed()||extra8,pausePressed=pause.wasPressed()||extra9;
+            while(toggle.wasPressed()){}
+            while(pause.wasPressed()){}
+            if(togglePressed)handleKey(8);
+            if(pausePressed)handleKey(9);
         }
         if (request != null && request.isDone()) receive();
         long now = System.nanoTime();
-        if (active && (gate.heartbeatExpired(now,lastReply) || dangerous() || (mc.currentScreen != null && !crafting.ownsScreen()) || !mc.isWindowFocused())) {
+        if (active && (gate.heartbeatExpired(now,lastReply) || dangerous() || (mc.currentScreen != null && !crafting.ownsScreen() && !rest.ownsScreen()) || !mc.isWindowFocused())) {
             stop("Pausa de seguranca · F8", true);
         }
         if (active && command != null) {
@@ -170,19 +186,28 @@ public final class MineLifeClient implements ClientModInitializer {
     }
 
     private void stop(String why, boolean disarm) {
+        boolean controlled=active||armed||command!=null;
+        active=false;if(disarm)armed=false;status=why;
+        gate.stop("PAUSED",disarm);
         if (command != null) finish("cancelled", "control_interrupted", new JsonObject());
-        if (active || armed) {
+        cancelControllers();
+        if (controlled) {
             navigator.release();
             mc.options.attackKey.setPressed(false); mc.options.useKey.setPressed(false);
-            if (mc.interactionManager != null) { mc.interactionManager.cancelBlockBreaking(); if (mc.player != null) mc.interactionManager.stopUsingItem(mc.player); }
-            if (mc.player != null) { mc.player.setSprinting(false); mc.player.input.movementForward = 0; mc.player.input.movementSideways = 0; mc.player.input.jumping = false; }
+            try {
+                if (mc.interactionManager != null) { mc.interactionManager.cancelBlockBreaking(); if (mc.player != null) mc.interactionManager.stopUsingItem(mc.player); }
+            } finally {
+                if (mc.player != null) { mc.player.setSprinting(false); mc.player.input.movementForward = 0; mc.player.input.movementSideways = 0; mc.player.input.jumping = false; }
+            }
         }
-        active = false; if (disarm) armed = false; status = why;
-        gate.stop("PAUSED", disarm);
-        if (crafting != null) crafting.cancel();
-        if (eating != null) eating.cancel();
-        if (pickup != null) pickup.cancel();
-        if (rest != null) rest.cancel();
+    }
+
+    private void cancelControllers() {
+        // One failed inventory restoration must not prevent the other controllers from releasing input.
+        for(Runnable cancel:List.<Runnable>of(crafting::cancel,eating::cancel,pickup::cancel,rest::cancel,placement::cancel)) {
+            try { cancel.run(); } catch(Exception e) { LOG.warn("MineLife: restauracao interrompida; controlador cancelado."); }
+        }
+        navigator.release();mc.options.attackKey.setPressed(false);mc.options.useKey.setPressed(false);
     }
 
     private void poll() {
@@ -210,6 +235,8 @@ public final class MineLifeClient implements ClientModInitializer {
             JsonObject reply = JsonParser.parseString(response.body()).getAsJsonObject();
             if (handshakeRequest) {
                 if (reply.get("protocol").getAsInt()!=1 || !reply.get("transport").getAsString().equals("HTTP/1.1")) throw new IllegalStateException("protocol_mismatch");
+                if(!reply.has("features") || !reply.getAsJsonArray("features").contains(new JsonPrimitive("workstations-v1")))
+                    throw new IllegalStateException("backend_update_required_workstations_v1");
                 handshaken = true; lastReply = System.nanoTime(); failures = 0; return;
             }
             if (!reply.get("session").getAsString().equals(session) || reply.get("seq").getAsLong() != seq) throw new IllegalStateException("stale_reply");
@@ -228,7 +255,8 @@ public final class MineLifeClient implements ClientModInitializer {
             if (active && command == null && reply.has("state")) status = reply.get("state").getAsString();
         } catch (Exception e) {
             request = null;
-            stop("Backend desconectado · F8", true);
+            stop("backend_update_required_workstations_v1".equals(e.getMessage())
+                    ? "Atualize/reinicie o backend · bancada v1" : "Backend desconectado · F8", true);
             // A nova sessão impede que comandos antigos sejam reutilizados após reconexão.
             session = UUID.randomUUID().toString(); seq = 0; seenCommands.clear(); results.clear(); lastReply = 0;
             handshaken = false; gate.state = "DISCONNECTED";
@@ -246,7 +274,7 @@ public final class MineLifeClient implements ClientModInitializer {
         o.addProperty("time", Math.floorMod(mc.world.getTimeOfDay(), 24000));
         o.addProperty("active", active); o.addProperty("armed", armed);
         o.addProperty("control_state", gate.state); o.addProperty("control_epoch", gate.epoch);
-        o.add("capabilities", JSON.toJsonTree(List.of("approach","break","collect","observe","explore","craft","eat","pickup","harvest","sleep")));
+        o.add("capabilities", JSON.toJsonTree(List.of("approach","break","collect","observe","explore","craft","eat","pickup","harvest","sleep","place","craft_table")));
         o.addProperty("biome", mc.world.getBiome(mc.player.getBlockPos()).getKey().map(k -> k.getValue().toString()).orElse("unknown"));
         o.add("entities", new JsonArray());
         JsonObject player = new JsonObject();
@@ -257,6 +285,7 @@ public final class MineLifeClient implements ClientModInitializer {
         if (ticks-sensorTick >= 20) { scanSensors(); sensorTick = ticks; }
         o.add("recipes", cachedRecipes);
         o.add("items", cachedItems);
+        o.add("placement_spots",cachedPlacements);
         o.add("blocks", cachedBlocks); o.add("frontiers", cachedFrontiers); o.add("results", JSON.toJsonTree(results));
         o.add("running", command == null ? JsonNull.INSTANCE : command.get("id"));
         return o;
@@ -264,6 +293,7 @@ public final class MineLifeClient implements ClientModInitializer {
 
     private void scanSensors() {
         cachedRecipes = crafting.offers();
+        cachedPlacements = placement.spots();
         JsonArray blocks = new JsonArray();
         // Scan local limitado; troncos naturais com folhas próximas, até 64 candidatos.
         BlockPos origin = mc.player.getBlockPos();
@@ -276,6 +306,9 @@ public final class MineLifeClient implements ClientModInitializer {
             if(sight.getType()!=HitResult.Type.BLOCK || !sight.getBlockPos().equals(p)) continue;
             JsonObject b=position(p);b.addProperty("id",Registries.BLOCK.getId(mc.world.getBlockState(p).getBlock()).toString());
             b.addProperty("log",false);b.addProperty("bed",true);blocks.add(b);beds++;
+        }
+        for(BlockPos p:InteractionSupport.tables(mc)){
+            JsonObject b=position(p);b.addProperty("id","minecraft:crafting_table");b.addProperty("log",false);blocks.add(b);
         }
         int count = 0;
         for (BlockPos p : BlockPos.iterate(origin.add(-12, -3, -12), origin.add(12, 6, 12))) {
@@ -302,7 +335,7 @@ public final class MineLifeClient implements ClientModInitializer {
             if (block.isAir() || !navigator.visibleFrom(mc.player.getEyePos(),p)) continue;
             if (block.getBlock() instanceof CropBlock crop) {
                 if (!Set.of("minecraft:wheat","minecraft:carrots","minecraft:potatoes","minecraft:beetroots").contains(id)
-                        || block.get(CropBlock.AGE) < crop.getMaxAge()) continue;
+                        || !crop.isMature(block)) continue;
                 JsonObject b = position(p); b.addProperty("id",id); b.addProperty("log",false); b.addProperty("harvestable",true); blocks.add(b);
                 continue;
             }
@@ -334,17 +367,23 @@ public final class MineLifeClient implements ClientModInitializer {
         seenCommands.add(id);
         if (seenCommands.size() > 4096) seenCommands.remove(seenCommands.iterator().next());
         String action = c.get("action").getAsString();
-        if (!Set.of("approach", "break", "collect", "explore", "observe", "craft", "eat", "pickup", "harvest", "sleep").contains(action)) return;
+        if (!Set.of("approach", "break", "collect", "explore", "observe", "craft", "eat", "pickup", "harvest", "sleep","place","craft_table").contains(action)) return;
         JsonObject p = c.getAsJsonObject("target");
         target = new BlockPos(p.get("x").getAsInt(), p.get("y").getAsInt(), p.get("z").getAsInt());
         command = c.deepCopy(); commandStart = System.nanoTime(); attacked = false; airTicks = 0; after = null; baseline = null;
         if (target.getSquaredDistance(mc.player.getBlockPos()) > 20 * 20) { finish("failed", "out_of_local_range", new JsonObject()); return; }
         originalBlock = Registries.BLOCK.get(net.minecraft.util.Identifier.of(p.get("id").getAsString()));
-        if (action.equals("craft")) {
+        if (action.equals("place")) {
+            navigator.release();
+            String error=placement.begin(target,c.getAsJsonObject("placement"));
+            if(error!=null)finish("failed",error,new JsonObject());else status="Colocando estação de trabalho";
+            return;
+        }
+        if (action.equals("craft") || action.equals("craft_table")) {
             navigator.release();
             String error = crafting.begin(c.getAsJsonObject("recipe"));
             if (error != null) finish("failed",error,new JsonObject());
-            else status = "Crafting 2x2";
+            else status = action.equals("craft_table")?"Usando bancada 3x3":"Crafting 2x2";
             return;
         }
         if (action.equals("eat")) {
@@ -381,7 +420,13 @@ public final class MineLifeClient implements ClientModInitializer {
         int timeout = Math.min(20000, Math.max(500, command.get("timeout_ms").getAsInt()));
         if (System.nanoTime() - commandStart > timeout * 1_000_000L) { finish("failed", "timeout", new JsonObject()); return; }
         String action = command.get("action").getAsString();
-        if (action.equals("craft")) {
+        if (action.equals("place")) {
+            JsonObject outcome=placement.tick();
+            if(outcome!=null)finish(outcome.has("error")?"failed":"success",
+                    outcome.has("error")?outcome.get("error").getAsString():"server_confirmed_placement",outcome);
+            return;
+        }
+        if (action.equals("craft") || action.equals("craft_table")) {
             JsonObject outcome=crafting.tick();
             if (outcome != null) finish(outcome.has("error")?"failed":"success",outcome.has("error")?outcome.get("error").getAsString():"server_confirmed_craft",outcome);
             return;
@@ -446,6 +491,9 @@ public final class MineLifeClient implements ClientModInitializer {
         if (!baseline.isDone()) return;
         if (baseline.isCompletedExceptionally()) { finish("failed", "server_evidence_unavailable", new JsonObject()); return; }
         if (!baseline.join().get("after_block").getAsString().equals(blockId())) { finish("failed", "target_changed", new JsonObject()); return; }
+        if(action.equals("harvest") && (!baseline.join().has("crop_mature") || !baseline.join().get("crop_mature").getAsBoolean())) {
+            finish("failed","crop_no_longer_mature",new JsonObject());return;
+        }
         if (mc.world.getBlockState(target).isAir()) {
             mc.options.attackKey.setPressed(false);
             mc.interactionManager.cancelBlockBreaking();
@@ -495,9 +543,7 @@ public final class MineLifeClient implements ClientModInitializer {
                 var capturedState = serverWorld.getBlockState(captured);
                 ev.addProperty("after_block", Registries.BLOCK.getId(capturedState.getBlock()).toString());
                 if (capturedState.getBlock() instanceof CropBlock crop) {
-                    ev.addProperty("crop_age",capturedState.get(CropBlock.AGE));
-                    ev.addProperty("crop_max_age",crop.getMaxAge());
-                    ev.addProperty("crop_mature",capturedState.get(CropBlock.AGE)>=crop.getMaxAge());
+                    ev.addProperty("crop_mature",crop.isMature(capturedState));
                 }
                 ev.add("inventory_after", inventory(player.getInventory()));
                 ev.addProperty("mined", player.getStatHandler().getStat(Stats.MINED.getOrCreateStat(capturedBlock)));
@@ -526,11 +572,9 @@ public final class MineLifeClient implements ClientModInitializer {
         navigator.release();
         mc.options.attackKey.setPressed(false);
         mc.options.useKey.setPressed(false);
-        if (mc.interactionManager != null) mc.interactionManager.cancelBlockBreaking();
-        crafting.cancel();
-        eating.cancel();
-        pickup.cancel();
-        rest.cancel();
+        cancelControllers();
+        try { if (mc.interactionManager != null) mc.interactionManager.cancelBlockBreaking(); }
+        catch(Exception e) { LOG.warn("MineLife: quebra cancelada localmente durante desconexao."); }
         evidence.add("target", position(target));
         JsonObject r = new JsonObject(); r.add("id", command.get("id")); r.addProperty("status", outcome);
         r.addProperty("reason", reason); r.add("evidence", evidence); results.add(r);
