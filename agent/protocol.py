@@ -17,6 +17,7 @@ class Block(Pos):
     id: str = Field(pattern=r'^[a-z0-9_.-]+:[a-z0-9_./-]+$', max_length=128)
     log: bool
     harvestable: bool = False
+    bed: bool = False
 
 
 class Player(StrictModel):

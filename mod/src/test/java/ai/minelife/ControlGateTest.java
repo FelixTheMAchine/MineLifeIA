@@ -20,6 +20,11 @@ public final class ControlGateTest {
         check(FoodConsumptionEvidence.classify(5,5,1,0)==FoodConsumptionEvidence.Result.NO_NUTRITION);
         check(FoodConsumptionEvidence.classify(5,10,2,0)==FoodConsumptionEvidence.Result.WRONG_AMOUNT);
         check(FoodConsumptionEvidence.classify(5,5,1,1)==FoodConsumptionEvidence.Result.NO_CONSUMPTION);
-        System.out.println("ControlGate/FoodEvidence: "+checks+" assertions passed (not a gameplay test).");
+        check(RestEvidence.verified(13000,100,0,1));
+        check(!RestEvidence.verified(13000,100,0,0));
+        check(!RestEvidence.verified(6000,100,0,1));
+        check(!RestEvidence.verified(12001,100,0,1));
+        check(!RestEvidence.verified(13000,13010,0,1));
+        System.out.println("ControlGate/Food/RestEvidence: "+checks+" assertions passed (not a gameplay test).");
     }
 }

@@ -63,7 +63,7 @@ class CognitiveEngine:
                      'collect': 'Verificando coleta', 'observe': 'Verificando um bloco',
                      'craft': 'Testando receita desbloqueada na grade 2×2', 'explore': 'Avançando para fronteira local validada',
                      'eat': 'Recuperando a fome com alimento disponível', 'pickup': 'Recolhendo um item observado',
-                     'harvest': 'Colhendo cultivo maduro observado'}[action])
+                     'harvest': 'Colhendo cultivo maduro observado', 'sleep': 'Tentando repouso noturno em cama observada'}[action])
         return payload
 
     def _knowledge(self, s, subject, status, eid):
@@ -88,7 +88,8 @@ class CognitiveEngine:
         event_type = self.m.rows('SELECT type FROM Events WHERE id=?', (eid,))[0]['type']
         knowledge = self.m.rows('SELECT evidence_ids FROM Knowledge WHERE world=? AND subject=?', (s.world, subject))
         first_evidence = bool(knowledge and len(json.loads(knowledge[0]['evidence_ids'])) == 1)
-        importance = {'crafted': .82, 'collected': .8, 'region_reached': .68, 'observed': .35}.get(event_type, .3)
+        importance = {'crafted': .82, 'collected': .8, 'region_reached': .68, 'observed': .35,
+                      'slept': .86, 'crop_harvested': .74}.get(event_type, .3)
         self.autobiography.record(s.world, eid, self.interests.topic(subject), importance,
                                   1.0 if first_evidence else .55, {'day': s.day, 'subject': subject})
         self.philosophy.consider(s.world, s.day, str(s.session), eid)
@@ -144,7 +145,7 @@ class CognitiveEngine:
         kind = plans[0]['kind'] if plans else 'log'
         if action == 'approach':
             valid &= ev.get('in_reach') is True
-            phase = 'observe' if kind == 'observe' else 'harvest' if kind == 'harvest' else 'break'
+            phase = 'observe' if kind == 'observe' else 'harvest' if kind == 'harvest' else 'sleep' if kind == 'sleep' else 'break'
         elif action == 'break':
             valid &= (ev.get('server_verified') is True and ev.get('before_block') == target['id'] and
                       ev.get('after_block') == 'minecraft:air' and type(ev.get('mined_delta')) is int and ev['mined_delta'] >= 1 and
@@ -162,6 +163,18 @@ class CognitiveEngine:
             if valid:
                 eid = self._event(s, 'crop_harvested', f'Retirei o bloco maduro {subject}. A remoção foi confirmada pelo servidor; ainda não confirmei os itens que possam ter caído.', ev, cmd['id'])
                 self._knowledge(s, 'harvest:' + subject, 'confirmed', eid)
+        elif action == 'sleep':
+            before_time, after_time = ev.get('time_before'), ev.get('time')
+            valid &= (ev.get('server_verified') is True and ev.get('rest_completed') is True
+                      and ev.get('bed_block') == target['id']
+                      and type(before_time) is int and type(after_time) is int
+                      and before_time % 24000 >= 12542 and after_time % 24000 < 12000
+                      and type(ev.get('sleep_count_before')) is int and type(ev.get('sleep_count_after')) is int
+                      and ev['sleep_count_after'] > ev['sleep_count_before'])
+            if valid:
+                subject = f"bed:{target['x']}:{target['y']}:{target['z']}"
+                eid = self._event(s,'slept','Usei a cama observada; a estatística de repouso e a passagem do horário noturno para o dia foram confirmadas pelo servidor.',ev,cmd['id'])
+                self._knowledge(s,subject,'confirmed',eid)
         elif action == 'collect':
             before = cmd.get('baseline', 0)
             inventory = ev.get('inventory_after', {})
@@ -376,7 +389,17 @@ class CognitiveEngine:
             self._state(s, 'WAITING_FOR_SAFE_ACTION', 'Fome baixa; sem alimento seguro executável no inventário')
             return None
         if s.time >= 12000:
-            self._state(s, 'WAITING_FOR_SAFE_ACTION', 'Noite: aguardando luz; abrigo e combate ainda não executáveis')
+            beds=sorted((b for b in s.blocks if b.bed),
+                        key=lambda b: math.dist((s.player.x,s.player.y,s.player.z),(b.x,b.y,b.z)))
+            if s.time>=12542 and s.dimension=='minecraft:overworld' and 'sleep' in s.capabilities:
+                for bed in beds:
+                    if math.dist((s.player.x,s.player.y,s.player.z),(bed.x,bed.y,bed.z))<=14:
+                        return self._start_sleep(s,bed,1200+self.motivation.values(s.world)['prudence'],
+                                                 'Noite observada; cama vanilla visível no Overworld e ameaça imediata ausente.',
+                                                 'IMMEDIATE')
+            reason='Crepúsculo: aguardando a janela de sono do jogo.' if s.time<12542 else 'Noite: nenhuma cama segura e alcançável observada; abrigo físico e combate ainda não executáveis.'
+            if s.dimension!='minecraft:overworld': reason='Repouso em cama não disponível nesta dimensão; aguardando condição segura.'
+            self._state(s, 'WAITING_FOR_SAFE_ACTION', reason)
             return None
         offered = set()
         for recipe in s.recipes:
@@ -497,6 +520,25 @@ class CognitiveEngine:
         self.m.db.execute("INSERT OR IGNORE INTO Hypotheses VALUES(?,?,?,?,'hypothesis','[]')",
                           (hypothesis,s.world,question,'A remoção do cultivo maduro pode produzir recursos; o bloco será verificado pelo servidor.'))
         hypothesis=self.m.rows('SELECT id FROM Hypotheses WHERE world=? AND question=?',(s.world,question))[0]['id']
+        exp=dict(id=str(uuid4()),world=s.world,session=str(s.session),hypothesis=hypothesis,
+                 target=json.dumps(target,sort_keys=True),phase='approach',status='running',evidence_ids='[]')
+        self.m.db.execute('INSERT INTO Experiments VALUES(:id,:world,:session,:hypothesis,:target,:phase,:status,:evidence_ids)',exp)
+        self.m.db.execute('INSERT INTO ExperimentGoals VALUES(?,?)',(exp['id'],gid))
+        self.m.db.execute("UPDATE Goals SET status='running' WHERE id=?",(gid,))
+        return self._command(s,exp,'approach')
+
+    def _start_sleep(self,s,bed,priority,reason,category):
+        target=bed.model_dump(exclude={'log','harvestable','bed'})
+        subject=f"rest:{s.day}:{bed.x}:{bed.y}:{bed.z}"
+        description='Repousar na cama observada para atravessar a noite com segurança'
+        gid=self.goals.ensure(s,subject,description,reason,priority,'sleep',{'target':target},'sleep_in_bed',category)
+        if not gid: return None
+        goal=next((g for g in self.goals.rows(s.world) if g['id']==gid and g['status']=='pending'),None)
+        if not goal: return None
+        hypothesis=str(uuid4())
+        self.m.db.execute("INSERT OR IGNORE INTO Hypotheses VALUES(?,?,?,?,'hypothesis','[]')",
+                          (hypothesis,s.world,description,'Usar uma cama válida durante a noite pode avançar o horário; o servidor deve confirmar a passagem e a estatística de repouso.'))
+        hypothesis=self.m.rows('SELECT id FROM Hypotheses WHERE world=? AND question=?',(s.world,description))[0]['id']
         exp=dict(id=str(uuid4()),world=s.world,session=str(s.session),hypothesis=hypothesis,
                  target=json.dumps(target,sort_keys=True),phase='approach',status='running',evidence_ids='[]')
         self.m.db.execute('INSERT INTO Experiments VALUES(:id,:world,:session,:hypothesis,:target,:phase,:status,:evidence_ids)',exp)

@@ -210,6 +210,41 @@ class ContinuousTest(unittest.TestCase):
         self.assertIsNone(response['command'])
         self.assertFalse(self.m.rows("SELECT * FROM Experiments WHERE status='running'"))
 
+    def test_night_uses_observed_bed_and_requires_server_rest_proof(self):
+        caps=CAPS+['sleep']
+        bed=dict(x=2,y=64,z=0,id='minecraft:red_bed',log=False,bed=True)
+        approach=self.step(blocks=[bed],capabilities=caps,time=13000)['command']
+        self.assertEqual(approach['action'],'approach')
+        sleep=self.step([self.success(approach,dict(target={k:approach['target'][k] for k in ('x','y','z')},in_reach=True))],
+                        blocks=[bed],capabilities=caps,time=13000)['command']
+        self.assertEqual(sleep['action'],'sleep')
+        ev=dict(target={k:sleep['target'][k] for k in ('x','y','z')},server_verified=True,rest_completed=True,
+                bed_block='minecraft:red_bed',time_before=13000,time=0,sleep_count_before=2,sleep_count_after=3)
+        self.step([self.success(sleep,ev)],blocks=[],capabilities=caps,time=0)
+        self.assertEqual(len(self.m.rows("SELECT * FROM Events WHERE type='slept' AND verified=1")),1)
+
+    def test_night_transition_without_sleep_stat_is_not_rest_evidence(self):
+        caps=CAPS+['sleep']
+        bed=dict(x=2,y=64,z=0,id='minecraft:red_bed',log=False,bed=True)
+        approach=self.step(blocks=[bed],capabilities=caps,time=13000)['command']
+        sleep=self.step([self.success(approach,dict(target={k:approach['target'][k] for k in ('x','y','z')},in_reach=True))],
+                        blocks=[bed],capabilities=caps,time=13000)['command']
+        ev=dict(target={k:sleep['target'][k] for k in ('x','y','z')},server_verified=True,rest_completed=True,
+                bed_block='minecraft:red_bed',time_before=13000,time=0,sleep_count_before=2,sleep_count_after=2)
+        self.step([self.success(sleep,ev)],blocks=[],capabilities=caps,time=0)
+        self.assertFalse(self.m.rows("SELECT * FROM Events WHERE type='slept' AND verified=1"))
+
+    def test_daytime_does_not_start_sleep_action(self):
+        bed=dict(x=2,y=64,z=0,id='minecraft:red_bed',log=False,bed=True)
+        response=self.step(blocks=[bed],capabilities=CAPS+['sleep'],time=6000)
+        self.assertNotEqual(response['command']['action'] if response['command'] else None,'sleep')
+
+    def test_twilight_does_not_call_bed_sleepable_before_vanilla_threshold(self):
+        bed=dict(x=2,y=64,z=0,id='minecraft:red_bed',log=False,bed=True)
+        response=self.step(blocks=[bed],capabilities=CAPS+['sleep'],time=12001)
+        self.assertIsNone(response['command'])
+        self.assertEqual(response['reason'],'Crepúsculo: aguardando a janela de sono do jogo.')
+
     def test_pickup_requires_inventory_delta_and_server_entity_change(self):
         item={'entity_id':str(uuid4()),'x':1.5,'y':64.0,'z':.5,'item_id':'minecraft:bread','count':1,'edible':True}
         c=self.step(blocks=[],capabilities=CAPS+['eat','pickup'],items=[item],

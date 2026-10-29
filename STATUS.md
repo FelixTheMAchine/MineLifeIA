@@ -1,5 +1,13 @@
 # MineLife AI — status 0.2.0 — 2026-10-29
 
+## Continuação — repouso noturno em cama observada
+
+- O sensor local anuncia camas vanilla que estejam carregadas e visíveis. No Overworld durante a noite, com controle ativo, sem ameaça próxima e rota local, o agente pode aproximar-se e usar uma cama existente pela interação normal do cliente.
+- A ação não conclui por clicar: o servidor precisa confirmar aumento de `SLEEP_IN_BED` e transição do horário da noite para o dia. Cama alterada, rota bloqueada, ameaça, interação recusada, timeout ou transição sem estatística resultam em falha e não viram memória de sucesso.
+- Quando não observa cama adequada, o agente aguarda com a limitação explícita. Não constrói abrigo e não contorna o bloqueio noturno.
+- Reflexões autobiográficas sobre repouso vinculam-se ao evento verificado e não afirmam que o entorno ficou seguro.
+- Verificações desta etapa: 57 testes Python passaram; build Fabric passou, incluindo 23 assertions Java de ControlGate/Food/RestEvidence. Nenhuma sessão gráfica Minecraft foi iniciada. O JAR não foi instalado e o save `ia` não foi alterado.
+
 ## Continuação — comida observada e colheita local
 
 - Corrigido o resultado da alimentação da última unidade: sucesso usa diferença total de inventário no snapshot do servidor e aumento de fome, não exige que o slot continue ocupado. Falha, falta de nutrição, troca de slot, evidência indisponível e timeout de restauração têm motivos distintos. Cancelamento/erro passam pelo `finish`/`stop`, que libera uso e tenta reverter o swap temporário.

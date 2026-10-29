@@ -18,6 +18,8 @@ class SkillRegistry:
                              'servidor confirma aumento do inventário e redução/remoção da entidade', max_attempts=2, timeout_seconds=18),
         'harvest_crop': Skill('harvest_crop', ('approach', 'harvest'), 'cultivo vanilla maduro observado e dia seguro',
                               'servidor confirma remoção do bloco maduro; drops exigem coleta verificada separadamente'),
+        'sleep_in_bed': Skill('sleep_in_bed', ('approach', 'sleep'), 'cama observada no Overworld, noite, sem ameaça próxima e rota local segura',
+                              'servidor confirma SLEEP_IN_BED e avanço do horário para o dia'),
         'eat_food': Skill('eat_food', ('eat',), 'fome abaixo da margem prudente e alimento conhecido sem efeito negativo no hotbar',
                           'Servidor confirma aumento da fome e consumo de exatamente uma unidade', max_attempts=3, timeout_seconds=12),
         'craft_planks': Skill('craft_planks', ('craft',), 'receita vanilla 2x2 desbloqueada de tábuas, gravetos ou bancada; grade vazia e materiais',

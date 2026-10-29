@@ -7,6 +7,7 @@ import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.block.Block;
+import net.minecraft.block.BedBlock;
 import net.minecraft.block.CropBlock;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
@@ -63,6 +64,7 @@ public final class MineLifeClient implements ClientModInitializer {
     private CraftingController crafting;
     private EatingController eating;
     private PickupController pickup;
+    private RestController rest;
     private String status = "Desativada · F8";
     private long seq, ticks, lastReply, lastPoll;
     private CompletableFuture<HttpResponse<String>> request;
@@ -79,6 +81,7 @@ public final class MineLifeClient implements ClientModInitializer {
         crafting = new CraftingController(mc);
         eating = new EatingController(mc);
         pickup = new PickupController(mc, navigator);
+        rest = new RestController(mc,navigator);
         toggle = key("Ativar/desativar MineLife AI", GLFW.GLFW_KEY_F8);
         pause = key("Pausar/retomar MineLife AI", GLFW.GLFW_KEY_F9);
         emergency = key("Emergencia MineLife AI", GLFW.GLFW_KEY_F10);
@@ -179,6 +182,7 @@ public final class MineLifeClient implements ClientModInitializer {
         if (crafting != null) crafting.cancel();
         if (eating != null) eating.cancel();
         if (pickup != null) pickup.cancel();
+        if (rest != null) rest.cancel();
     }
 
     private void poll() {
@@ -242,7 +246,7 @@ public final class MineLifeClient implements ClientModInitializer {
         o.addProperty("time", Math.floorMod(mc.world.getTimeOfDay(), 24000));
         o.addProperty("active", active); o.addProperty("armed", armed);
         o.addProperty("control_state", gate.state); o.addProperty("control_epoch", gate.epoch);
-        o.add("capabilities", JSON.toJsonTree(List.of("approach","break","collect","observe","explore","craft","eat","pickup","harvest")));
+        o.add("capabilities", JSON.toJsonTree(List.of("approach","break","collect","observe","explore","craft","eat","pickup","harvest","sleep")));
         o.addProperty("biome", mc.world.getBiome(mc.player.getBlockPos()).getKey().map(k -> k.getValue().toString()).orElse("unknown"));
         o.add("entities", new JsonArray());
         JsonObject player = new JsonObject();
@@ -263,6 +267,16 @@ public final class MineLifeClient implements ClientModInitializer {
         JsonArray blocks = new JsonArray();
         // Scan local limitado; troncos naturais com folhas próximas, até 64 candidatos.
         BlockPos origin = mc.player.getBlockPos();
+        int beds=0;
+        for (BlockPos p : BlockPos.iterate(origin.add(-12,-3,-12),origin.add(12,3,12))) {
+            if (beds>=16 || blocks.size()>=128) break;
+            if (!mc.world.isChunkLoaded(p) || mc.player.squaredDistanceTo(Vec3d.ofCenter(p))>12*12
+                    || !(mc.world.getBlockState(p).getBlock() instanceof BedBlock)) continue;
+            var sight=mc.world.raycast(new RaycastContext(mc.player.getEyePos(),Vec3d.ofCenter(p),RaycastContext.ShapeType.OUTLINE,RaycastContext.FluidHandling.NONE,mc.player));
+            if(sight.getType()!=HitResult.Type.BLOCK || !sight.getBlockPos().equals(p)) continue;
+            JsonObject b=position(p);b.addProperty("id",Registries.BLOCK.getId(mc.world.getBlockState(p).getBlock()).toString());
+            b.addProperty("log",false);b.addProperty("bed",true);blocks.add(b);beds++;
+        }
         int count = 0;
         for (BlockPos p : BlockPos.iterate(origin.add(-12, -3, -12), origin.add(12, 6, 12))) {
             if (!mc.world.isChunkLoaded(p)) continue;
@@ -292,7 +306,7 @@ public final class MineLifeClient implements ClientModInitializer {
                 JsonObject b = position(p); b.addProperty("id",id); b.addProperty("log",false); b.addProperty("harvestable",true); blocks.add(b);
                 continue;
             }
-            if (block.isIn(BlockTags.LOGS) || observed.contains(id)) continue;
+            if (block.getBlock() instanceof BedBlock || block.isIn(BlockTags.LOGS) || observed.contains(id)) continue;
             observed.add(id); JsonObject b = position(p); b.addProperty("id",id); b.addProperty("log",false); blocks.add(b);
             if (observed.size()>=16) break;
         }
@@ -320,7 +334,7 @@ public final class MineLifeClient implements ClientModInitializer {
         seenCommands.add(id);
         if (seenCommands.size() > 4096) seenCommands.remove(seenCommands.iterator().next());
         String action = c.get("action").getAsString();
-        if (!Set.of("approach", "break", "collect", "explore", "observe", "craft", "eat", "pickup", "harvest").contains(action)) return;
+        if (!Set.of("approach", "break", "collect", "explore", "observe", "craft", "eat", "pickup", "harvest", "sleep").contains(action)) return;
         JsonObject p = c.getAsJsonObject("target");
         target = new BlockPos(p.get("x").getAsInt(), p.get("y").getAsInt(), p.get("z").getAsInt());
         command = c.deepCopy(); commandStart = System.nanoTime(); attacked = false; airTicks = 0; after = null; baseline = null;
@@ -344,6 +358,12 @@ public final class MineLifeClient implements ClientModInitializer {
             navigator.release();
             String error=pickup.begin(c.getAsJsonObject("item"),target);
             if(error!=null)finish("failed",error,new JsonObject());else status="Coletando item observado";
+            return;
+        }
+        if (action.equals("sleep")) {
+            navigator.release();
+            String error=rest.begin(target);
+            if(error!=null)finish("failed",error,new JsonObject());else status="Procurando repouso seguro";
             return;
         }
         if (action.equals("observe")) { after=authoritative(); return; }
@@ -376,6 +396,12 @@ public final class MineLifeClient implements ClientModInitializer {
             JsonObject outcome=pickup.tick(target);
             if(outcome!=null)finish(outcome.has("error")?"failed":"success",
                     outcome.has("error")?outcome.get("error").getAsString():"server_confirmed_pickup",outcome);
+            return;
+        }
+        if (action.equals("sleep")) {
+            JsonObject outcome=rest.tick();
+            if(outcome!=null)finish(outcome.has("error")?"failed":"success",
+                    outcome.has("error")?outcome.get("error").getAsString():"server_confirmed_night_rest",outcome);
             return;
         }
         if (action.equals("observe")) {
@@ -504,6 +530,7 @@ public final class MineLifeClient implements ClientModInitializer {
         crafting.cancel();
         eating.cancel();
         pickup.cancel();
+        rest.cancel();
         evidence.add("target", position(target));
         JsonObject r = new JsonObject(); r.add("id", command.get("id")); r.addProperty("status", outcome);
         r.addProperty("reason", reason); r.add("evidence", evidence); results.add(r);

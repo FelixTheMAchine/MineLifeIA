@@ -44,6 +44,11 @@ class PhilosophicalReflectionEngine:
             question = f"A remoção verificada de {subject or 'um cultivo maduro'} alterou o bloco; que recursos ela realmente oferece, e como isso poderia mudar minhas escolhas?"
             interpretation = 'O servidor confirmou a remoção do cultivo, mas ainda não confirmei quais itens caíram; por enquanto, a utilidade permanece uma pergunta.'
             importance, novelty = .74, .75
+        elif event['type'] == 'slept':
+            theme = 'safety-and-discovery'
+            question = 'Depois de atravessar uma noite usando uma cama confirmada, como a segurança muda o que posso escolher investigar depois?'
+            interpretation = 'O servidor confirmou repouso e avanço do horário; isso mostra uma forma concreta de atravessar a noite, mas não prova que todos os lugares ou abrigos sejam seguros.'
+            importance, novelty = .84, .76
         elif event['type'] == 'attempt_failed':
             theme = 'failure'
             goal_rows = self.m.rows('SELECT g.status,p.attempts,p.last_error FROM Goals g JOIN GoalPlans p ON p.goal_id=g.id '
