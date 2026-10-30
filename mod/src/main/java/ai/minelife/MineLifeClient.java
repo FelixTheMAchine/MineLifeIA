@@ -67,6 +67,8 @@ public final class MineLifeClient implements ClientModInitializer {
     private RestController rest;
     private BlockPlacementController placement;
     private JsonArray cachedPlacements=new JsonArray();
+    private JsonArray cachedSites=new JsonArray();
+    private ShelterController shelter;
     private boolean held8,held9,held10;
     private String status = "Desativada · F8";
     private long seq, ticks, lastReply, lastPoll;
@@ -86,6 +88,7 @@ public final class MineLifeClient implements ClientModInitializer {
         pickup = new PickupController(mc, navigator);
         rest = new RestController(mc,navigator);
         placement=new BlockPlacementController(mc,navigator);
+        shelter=new ShelterController(mc,navigator);
         toggle = key("Ativar/desativar MineLife AI", GLFW.GLFW_KEY_F8);
         pause = key("Pausar/retomar MineLife AI", GLFW.GLFW_KEY_F9);
         emergency = key("Emergencia MineLife AI", GLFW.GLFW_KEY_F10);
@@ -204,7 +207,7 @@ public final class MineLifeClient implements ClientModInitializer {
 
     private void cancelControllers() {
         // One failed inventory restoration must not prevent the other controllers from releasing input.
-        for(Runnable cancel:List.<Runnable>of(crafting::cancel,eating::cancel,pickup::cancel,rest::cancel,placement::cancel)) {
+        for(Runnable cancel:List.<Runnable>of(crafting::cancel,eating::cancel,pickup::cancel,rest::cancel,placement::cancel,shelter::cancel)) {
             try { cancel.run(); } catch(Exception e) { LOG.warn("MineLife: restauracao interrompida; controlador cancelado."); }
         }
         navigator.release();mc.options.attackKey.setPressed(false);mc.options.useKey.setPressed(false);
@@ -235,8 +238,8 @@ public final class MineLifeClient implements ClientModInitializer {
             JsonObject reply = JsonParser.parseString(response.body()).getAsJsonObject();
             if (handshakeRequest) {
                 if (reply.get("protocol").getAsInt()!=1 || !reply.get("transport").getAsString().equals("HTTP/1.1")) throw new IllegalStateException("protocol_mismatch");
-                if(!reply.has("features") || !reply.getAsJsonArray("features").contains(new JsonPrimitive("workstations-v1")))
-                    throw new IllegalStateException("backend_update_required_workstations_v1");
+                if(!reply.has("features") || !reply.getAsJsonArray("features").contains(new JsonPrimitive("shelters-v1")))
+                    throw new IllegalStateException("backend_update_required_shelters_v1");
                 handshaken = true; lastReply = System.nanoTime(); failures = 0; return;
             }
             if (!reply.get("session").getAsString().equals(session) || reply.get("seq").getAsLong() != seq) throw new IllegalStateException("stale_reply");
@@ -255,8 +258,8 @@ public final class MineLifeClient implements ClientModInitializer {
             if (active && command == null && reply.has("state")) status = reply.get("state").getAsString();
         } catch (Exception e) {
             request = null;
-            stop("backend_update_required_workstations_v1".equals(e.getMessage())
-                    ? "Atualize/reinicie o backend · bancada v1" : "Backend desconectado · F8", true);
+            stop("backend_update_required_shelters_v1".equals(e.getMessage())
+                    ? "Atualize/reinicie o backend · abrigo v1" : "Backend desconectado · F8", true);
             // A nova sessão impede que comandos antigos sejam reutilizados após reconexão.
             session = UUID.randomUUID().toString(); seq = 0; seenCommands.clear(); results.clear(); lastReply = 0;
             handshaken = false; gate.state = "DISCONNECTED";
@@ -274,7 +277,8 @@ public final class MineLifeClient implements ClientModInitializer {
         o.addProperty("time", Math.floorMod(mc.world.getTimeOfDay(), 24000));
         o.addProperty("active", active); o.addProperty("armed", armed);
         o.addProperty("control_state", gate.state); o.addProperty("control_epoch", gate.epoch);
-        o.add("capabilities", JSON.toJsonTree(List.of("approach","break","collect","observe","explore","craft","eat","pickup","harvest","sleep","place","craft_table")));
+        o.add("capabilities", JSON.toJsonTree(List.of("approach","break","collect","observe","explore","craft","eat","pickup","harvest","sleep","place","craft_table",
+                "build_shelter","inspect_shelter","enter_shelter","leave_shelter")));
         o.addProperty("biome", mc.world.getBiome(mc.player.getBlockPos()).getKey().map(k -> k.getValue().toString()).orElse("unknown"));
         o.add("entities", new JsonArray());
         JsonObject player = new JsonObject();
@@ -286,6 +290,7 @@ public final class MineLifeClient implements ClientModInitializer {
         o.add("recipes", cachedRecipes);
         o.add("items", cachedItems);
         o.add("placement_spots",cachedPlacements);
+        o.add("shelter_sites",cachedSites);
         o.add("blocks", cachedBlocks); o.add("frontiers", cachedFrontiers); o.add("results", JSON.toJsonTree(results));
         o.add("running", command == null ? JsonNull.INSTANCE : command.get("id"));
         return o;
@@ -294,6 +299,7 @@ public final class MineLifeClient implements ClientModInitializer {
     private void scanSensors() {
         cachedRecipes = crafting.offers();
         cachedPlacements = placement.spots();
+        cachedSites=active&&command==null?shelter.sites():new JsonArray();
         JsonArray blocks = new JsonArray();
         // Scan local limitado; troncos naturais com folhas próximas, até 64 candidatos.
         BlockPos origin = mc.player.getBlockPos();
@@ -367,12 +373,18 @@ public final class MineLifeClient implements ClientModInitializer {
         seenCommands.add(id);
         if (seenCommands.size() > 4096) seenCommands.remove(seenCommands.iterator().next());
         String action = c.get("action").getAsString();
-        if (!Set.of("approach", "break", "collect", "explore", "observe", "craft", "eat", "pickup", "harvest", "sleep","place","craft_table").contains(action)) return;
+        if (!Set.of("approach", "break", "collect", "explore", "observe", "craft", "eat", "pickup", "harvest", "sleep","place","craft_table",
+                "build_shelter","inspect_shelter","enter_shelter","leave_shelter").contains(action)) return;
         JsonObject p = c.getAsJsonObject("target");
         target = new BlockPos(p.get("x").getAsInt(), p.get("y").getAsInt(), p.get("z").getAsInt());
         command = c.deepCopy(); commandStart = System.nanoTime(); attacked = false; airTicks = 0; after = null; baseline = null;
         if (target.getSquaredDistance(mc.player.getBlockPos()) > 20 * 20) { finish("failed", "out_of_local_range", new JsonObject()); return; }
         originalBlock = Registries.BLOCK.get(net.minecraft.util.Identifier.of(p.get("id").getAsString()));
+        if(action.endsWith("_shelter")) {
+            navigator.release();String error=shelter.begin(action,c.getAsJsonObject("shelter"));
+            if(error!=null)finish("failed",error,new JsonObject());else status="Projeto de abrigo: "+action;
+            return;
+        }
         if (action.equals("place")) {
             navigator.release();
             String error=placement.begin(target,c.getAsJsonObject("placement"));
@@ -420,6 +432,12 @@ public final class MineLifeClient implements ClientModInitializer {
         int timeout = Math.min(20000, Math.max(500, command.get("timeout_ms").getAsInt()));
         if (System.nanoTime() - commandStart > timeout * 1_000_000L) { finish("failed", "timeout", new JsonObject()); return; }
         String action = command.get("action").getAsString();
+        if(action.endsWith("_shelter")) {
+            JsonObject outcome=shelter.tick();
+            if(outcome!=null)finish(outcome.has("error")?"failed":"success",
+                    outcome.has("error")?outcome.get("error").getAsString():"server_confirmed_shelter_action",outcome);
+            return;
+        }
         if (action.equals("place")) {
             JsonObject outcome=placement.tick();
             if(outcome!=null)finish(outcome.has("error")?"failed":"success",

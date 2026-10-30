@@ -1,0 +1,23 @@
+{
+  "id": "refuge_v1",
+  "description": "Refúgio de emergência 3x3, interior 1x1 com dois blocos de altura, porta voltada ao sul",
+  "steps": [
+    {"offset": [-1,0,-1], "support": [-1,-1,-1], "face": "up", "role": "plank"},
+    {"offset": [1,0,-1], "support": [1,-1,-1], "face": "up", "role": "plank"},
+    {"offset": [-1,0,1], "support": [-1,-1,1], "face": "up", "role": "plank"},
+    {"offset": [1,0,1], "support": [1,-1,1], "face": "up", "role": "plank"},
+    {"offset": [0,0,-1], "support": [0,-1,-1], "face": "up", "role": "plank"},
+    {"offset": [-1,0,0], "support": [-1,-1,0], "face": "up", "role": "plank"},
+    {"offset": [1,0,0], "support": [1,-1,0], "face": "up", "role": "plank"},
+    {"offset": [-1,1,-1], "support": [-1,0,-1], "face": "up", "role": "plank"},
+    {"offset": [1,1,-1], "support": [1,0,-1], "face": "up", "role": "plank"},
+    {"offset": [-1,1,1], "support": [-1,0,1], "face": "up", "role": "plank"},
+    {"offset": [1,1,1], "support": [1,0,1], "face": "up", "role": "plank"},
+    {"offset": [0,1,-1], "support": [0,0,-1], "face": "up", "role": "plank"},
+    {"offset": [-1,1,0], "support": [-1,0,0], "face": "up", "role": "plank"},
+    {"offset": [1,1,0], "support": [1,0,0], "face": "up", "role": "plank"},
+    {"offset": [0,2,-1], "support": [0,1,-1], "face": "up", "role": "plank"},
+    {"offset": [0,2,0], "support": [0,2,-1], "face": "south", "role": "plank"},
+    {"offset": [0,0,1], "support": [0,-1,1], "face": "up", "role": "door"}
+  ]
+}

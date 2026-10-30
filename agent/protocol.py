@@ -116,3 +116,4 @@ class Step(StrictModel):
     recipes: list[RecipeOffer] = Field(default_factory=list, max_length=32)
     items: list[ItemObservation] = Field(default_factory=list, max_length=24)
     placement_spots: list[PlacementSpot] = Field(default_factory=list, max_length=12)
+    shelter_sites: list[Pos] = Field(default_factory=list, max_length=4)

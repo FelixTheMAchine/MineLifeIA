@@ -13,7 +13,7 @@ from agent.protocol import Step
 from agent.llm import LanguageAdvisor
 from agent.skills import SkillRegistry
 
-BRIDGE_FEATURES = ['workstations-v1']
+BRIDGE_FEATURES = ['workstations-v1','shelters-v1']
 BRIDGE_ACTIONS = sorted({action for skill in SkillRegistry.skills.values() for action in skill.actions})
 
 

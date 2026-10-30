@@ -89,6 +89,12 @@ class JournalWriter:
             return 'A transformação dos itens e a estatística do servidor sustentam este resultado; o que construirei depois ainda está em aberto.'
         if kind == 'placed':
             return 'Escolhi um espaço e coloquei ali uma estação. Registrei a mudança no mundo e o material gasto; o próximo uso ainda precisa acontecer.'
+        if kind=='shelter_completed':
+            return 'O lugar que planejei ganhou paredes, teto e uma entrada verificáveis. Quero descobrir como ter esse ponto de retorno pode mudar minhas escolhas.'
+        if kind=='shelter_entered':
+            return 'Entrei e fechei a porta. Posso considerar a próxima decisão a partir deste lugar, sem transformar uma entrada confirmada na história de uma noite que ainda não terminou.'
+        if kind=='shelter_left':
+            return 'Voltei ao lado de fora. O que deixei para trás permanece na memória como um lugar observado, e as próximas experiências ainda estão por acontecer.'
         if kind == 'ate':
             return 'A alteração observada na fome confirmou o efeito desta refeição. Precisei cuidar de uma necessidade imediata antes de escolher o próximo caminho.'
         if kind == 'crop_harvested':
@@ -191,7 +197,7 @@ class JournalWriter:
         if found:
             self.export_entry(found[0])
             return found[0]
-        events = self.memory.rows('SELECT * FROM Events WHERE world=? AND day=? AND verified=1 '
+        events = self.memory.rows("SELECT * FROM Events WHERE world=? AND day=? AND verified=1 AND type NOT IN ('construction_step','shelter_inspected') "
                                   + ('AND id=? ' if event_id else '') + 'ORDER BY timestamp,id',
                                   (world, day, event_id) if event_id else (world, day))
         if not events:

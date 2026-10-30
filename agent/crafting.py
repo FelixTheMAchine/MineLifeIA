@@ -1,5 +1,6 @@
 """Demand for executable, game-advertised recipes. Facts still require command evidence."""
 import math
+from agent.construction import ConstructionPlanner, DOORS, PLANKS
 
 
 def ingredients(recipe):
@@ -26,6 +27,7 @@ def craft_evidence(recipe, evidence):
 class CraftingPlanner:
     def __init__(self, memory):
         self.m = memory
+        self.construction=ConstructionPlanner(memory)
 
     def has_table(self, s):
         return any(b.id == 'minecraft:crafting_table' for b in s.blocks)
@@ -51,7 +53,8 @@ class CraftingPlanner:
     def needs_station(self,s):
         inv=s.player.inventory
         tools=all(any(k.endswith(suffix) and v>0 for k,v in inv.items()) for suffix in ('_pickaxe','_axe'))
-        return (not tools or inv.get('minecraft:wheat',0)>=3 and inv.get('minecraft:bread',0)<3
+        return (self.construction.requirements(s)[1]>0 and not any(inv.get(k,0) for k in DOORS)
+                or not tools or inv.get('minecraft:wheat',0)>=3 and inv.get('minecraft:bread',0)<3
                 or inv.get('minecraft:cobblestone',0)>=8 and not inv.get('minecraft:furnace',0)
                 or sum(v for k,v in inv.items() if k.endswith('_planks'))>=8 and not inv.get('minecraft:chest',0))
 
@@ -64,7 +67,13 @@ class CraftingPlanner:
             return 0 if station or not self.needs_station(s) else 1
         if output.endswith('_planks'):
             total = sum(v for k, v in inv.items() if k.endswith('_planks'))
-            return inv.get(output, 0) + max(0, (12 if not pickaxe or not station else 4)-total)
+            budget=max(12 if not pickaxe or not station else 4,self.construction.wood_demand(s))
+            needed=max(0,budget-total)
+            if self.construction.requirements(s)[1] and not any(inv.get(k,0) for k in DOORS) and max((inv.get(k,0) for k in PLANKS),default=0)<6:
+                needed=max(needed,6-inv.get(output,0))
+            return inv.get(output,0)+needed
+        if output in DOORS:
+            return 1 if self.construction.requirements(s)[1] and not any(inv.get(k,0) for k in DOORS) else 0
         if output == 'minecraft:stick':
             return 4 if not pickaxe or not axe else 0
         if output.startswith('minecraft:wooden_'):
@@ -79,7 +88,12 @@ class CraftingPlanner:
             return False
         raw = sum(v*4 if k.endswith('_log') else v for k,v in s.player.inventory.items() if k.endswith(('_log','_planks')))
         pickaxe = any(k.endswith('_pickaxe') and v > 0 for k,v in s.player.inventory.items())
-        return raw < (12 if not pickaxe else 4)
+        budget=max(12 if not pickaxe else 4,self.construction.wood_demand(s))
+        if self.construction.requirements(s)[1] and not any(s.player.inventory.get(k,0) for k in DOORS):
+            total=sum(s.player.inventory.get(k,0) for k in PLANKS)
+            most=max((s.player.inventory.get(k,0) for k in PLANKS),default=0)
+            budget=max(budget,total+max(0,6-most))
+        return raw < budget
 
     def proposals(self, s, personality):
         inv = s.player.inventory
@@ -92,6 +106,9 @@ class CraftingPlanner:
                                  priority=205,kind='observe',skill='observe_block',params=dict(target=target)))
         if 'place' in s.capabilities and inv.get('minecraft:crafting_table',0)>0 and self.needs_station(s) and not (self.has_table(s) or self.remembered_table(s)):
             for spot in sorted(s.placement_spots, key=lambda p: math.dist((p.x,p.y,p.z),(s.player.x,s.player.y,s.player.z))):
+                project=self.construction.current(s)
+                if project and abs(spot.x-project['anchor']['x'])<=1 and -1<=spot.z-project['anchor']['z']<=2:
+                    continue
                 if (spot.support.x,spot.support.y+1,spot.support.z)!=(spot.x,spot.y,spot.z):
                     continue
                 target=dict(x=spot.x,y=spot.y,z=spot.z,id='minecraft:crafting_table')
@@ -117,6 +134,7 @@ class CraftingPlanner:
                                       "WHERE p.world=? AND p.subject LIKE ? AND g.status='completed'",(s.world,prefix+'%'))[0]['n']
                 subject=prefix+str(completed)
             priority=180 if offer.output_id=='minecraft:crafting_table' else 160 if offer.output_id.endswith(('_pickaxe','_axe')) else 130
+            if offer.output_id in DOORS:priority=190
             if offer.output_id=='minecraft:bread':
                 priority=1400 if s.player.food<=8 else 170
             target=offer.station.model_dump() if offer.station else dict(x=math.floor(s.player.x),y=math.floor(s.player.y),z=math.floor(s.player.z))

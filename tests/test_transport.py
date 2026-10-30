@@ -63,9 +63,15 @@ class TransportTest(unittest.TestCase):
             self.assertFalse(thread.is_alive())
 
     def test_java_http11_handshake_and_observation_command_exchange(self):
+        self._java_contract('BridgeContractTest')
+
+    def test_java_shelter_observation_negotiates_feature_and_project_command(self):
+        self._java_contract('ShelterBridgeContractTest')
+
+    def _java_contract(self,class_name):
         root=Path(__file__).resolve().parents[1]
         classes=root/'mod/build/classes/java/test'
-        if not shutil.which('java') or not (classes/'ai/minelife/BridgeContractTest.class').exists():
+        if not shutil.which('java') or not (classes/f'ai/minelife/{class_name}.class').exists():
             self.skipTest('Compile o mod antes para executar o teste de transporte Java')
         with tempfile.TemporaryDirectory() as td:
             sock=socket.socket();sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
@@ -80,7 +86,7 @@ class TransportTest(unittest.TestCase):
             try:
                 deadline=time.monotonic()+5
                 while not server.started and time.monotonic()<deadline:time.sleep(.02)
-                run=subprocess.run(['java','-cp',str(classes),'ai.minelife.BridgeContractTest',f'http://127.0.0.1:{port}'],capture_output=True,text=True,timeout=15)
+                run=subprocess.run(['java','-cp',str(classes),f'ai.minelife.{class_name}',f'http://127.0.0.1:{port}'],capture_output=True,text=True,timeout=15)
                 self.assertEqual(run.returncode,0,run.stderr)
                 self.assertEqual(versions,[('1.1',None),('1.1',None)])
             finally:

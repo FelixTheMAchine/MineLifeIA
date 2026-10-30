@@ -9,7 +9,7 @@ $pythonPath = Join-Path $projectRoot '.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $pythonPath)) { throw 'Execute novamente com -Setup' }
 $health = $null
 try { $health = Invoke-RestMethod 'http://127.0.0.1:8765/health' -TimeoutSec 2 } catch { }
-if ($health -and ($health.service -ne 'MineLife AI' -or $health.version -ne '0.2.0' -or $health.features -notcontains 'workstations-v1')) { throw 'Porta 8765 ocupada por outro backend/versao. Encerre o backend antigo com scripts/Stop-MineLife.ps1 e reinicie para carregar suporte a bancadas.' }
+if ($health -and ($health.service -ne 'MineLife AI' -or $health.version -ne '0.2.0' -or $health.features -notcontains 'shelters-v1')) { throw 'Porta 8765 ocupada por outro backend/versao. Encerre o backend antigo com scripts/Stop-MineLife.ps1 e reinicie para carregar suporte a abrigos.' }
 if (-not $health) {
     New-Item -ItemType Directory -Force -Path 'data\logs' | Out-Null
     $process = Start-Process -FilePath $pythonPath -ArgumentList @('-m','agent.main') -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $projectRoot 'data\logs\backend.out.log') -RedirectStandardError (Join-Path $projectRoot 'data\logs\backend.err.log')
@@ -18,7 +18,7 @@ if (-not $health) {
         Start-Sleep -Milliseconds 250
         try { $health = Invoke-RestMethod 'http://127.0.0.1:8765/health' -TimeoutSec 1; break } catch { }
     }
-    if (-not $health -or $health.version -ne '0.2.0' -or $health.features -notcontains 'workstations-v1') { throw 'Backend compativel nao iniciou; consulte data\logs\backend.err.log' }
+    if (-not $health -or $health.version -ne '0.2.0' -or $health.features -notcontains 'shelters-v1') { throw 'Backend compativel nao iniciou; consulte data\logs\backend.err.log' }
 }
 if (-not $NoBrowser) { Start-Process 'http://127.0.0.1:8765' }
 Write-Host 'MineLife AI 0.2.0 iniciado. Abra Minecraft, entre em ia e pressione F8.'

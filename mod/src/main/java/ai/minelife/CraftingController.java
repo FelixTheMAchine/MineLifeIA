@@ -40,7 +40,7 @@ final class CraftingController {
     }
 
     private boolean allowed(String id) {
-        return id.startsWith("minecraft:") && (id.endsWith("_planks") ||
+        return id.startsWith("minecraft:") && (id.endsWith("_planks") || ShelterBlueprint.material(id,"_door") ||
                 Set.of("minecraft:stick","minecraft:crafting_table","minecraft:bread","minecraft:torch",
                         "minecraft:furnace","minecraft:chest","minecraft:wooden_pickaxe","minecraft:wooden_axe",
                         "minecraft:wooden_shovel","minecraft:wooden_hoe","minecraft:stone_pickaxe",

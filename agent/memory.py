@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+SCHEMA_VERSION = 4
+
 
 def now():
     return datetime.now(timezone.utc).isoformat()
@@ -16,7 +18,9 @@ class MemoryManager:
         if Path(path).exists():
             with closing(sqlite3.connect(path)) as existing:
                 version = existing.execute('PRAGMA user_version').fetchone()[0]
-            if version < 3:
+            if version>SCHEMA_VERSION:
+                raise ValueError('Banco de uma versão mais recente; recuso reduzir o esquema')
+            if version < SCHEMA_VERSION:
                 from scripts.backup_memory import backup
                 backup(path)
         self.db = sqlite3.connect(path, check_same_thread=False)
@@ -109,12 +113,19 @@ class MemoryManager:
             purpose TEXT NOT NULL,preferred_subject TEXT,question TEXT NOT NULL,hypothesis TEXT NOT NULL,
             interpretation TEXT NOT NULL,journal_draft TEXT NOT NULL,social_interpretation TEXT NOT NULL,
             source_event_ids TEXT NOT NULL,status TEXT NOT NULL,created TEXT NOT NULL,UNIQUE(world,id));
+          CREATE TABLE IF NOT EXISTS ConstructionProjects(id TEXT PRIMARY KEY,world TEXT NOT NULL,
+            dimension TEXT NOT NULL,blueprint TEXT NOT NULL,anchor TEXT NOT NULL,status TEXT NOT NULL,
+            reason TEXT NOT NULL,last_inspection TEXT,last_session TEXT,created TEXT NOT NULL,updated TEXT NOT NULL);
+          CREATE INDEX IF NOT EXISTS construction_world ON ConstructionProjects(world,dimension);
+          CREATE TABLE IF NOT EXISTS ConstructionSteps(project TEXT NOT NULL,step INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',item TEXT,evidence_id TEXT,revision INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(project,step),FOREIGN KEY(project) REFERENCES ConstructionProjects(id));
           CREATE INDEX IF NOT EXISTS commands_pending ON Commands(session,status);
           CREATE INDEX IF NOT EXISTS experiments_active ON Experiments(world,session,status);
           CREATE INDEX IF NOT EXISTS goals_world_status ON Goals(world,status);
         ''')
-        # Migration v3 is additive; v0.1/v0.2 memory and journal rows remain intact.
-        self.db.execute('PRAGMA user_version=3')
+        # Additive migration: existing knowledge, events and immutable journals remain intact.
+        self.db.execute(f'PRAGMA user_version={SCHEMA_VERSION}')
         self.db.commit()
 
     def rows(self, sql, args=()):

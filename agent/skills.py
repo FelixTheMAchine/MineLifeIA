@@ -14,6 +14,14 @@ class Skill:
 class SkillRegistry:
     """Só habilidades com executor físico real; capacidades são negociadas com o mod."""
     skills = {
+        'build_shelter': Skill('build_shelter',('build_shelter',),'projeto persistente, dia, materiais reservados, célula vazia e apoio alcançável',
+                               'bloco de uma etapa, consumo e USED confirmados pelo servidor; não confirma o abrigo inteiro'),
+        'inspect_shelter': Skill('inspect_shelter',('inspect_shelter',),'projeto conhecido no alcance local e chunks carregados',
+                                 'todos os componentes, piso, interior e porta inspecionados no servidor'),
+        'enter_shelter': Skill('enter_shelter',('enter_shelter',),'abrigo completo próximo, caminho seguro e sem ameaça imediata',
+                               'posição interna, estrutura completa e porta fechada confirmadas'),
+        'leave_shelter': Skill('leave_shelter',('leave_shelter',),'local de projeto com piso, passagem aberta ou porta válida e saída local viável',
+                               'posição externa e fechamento da porta existente confirmados; obra parcial continua parcial'),
         'place_workstation': Skill('place_workstation', ('place',), 'estação no inventário, espaço vazio observado, apoio e hotbar disponíveis',
                                    'bloco confirmado pelo servidor, item consumido e estatística USED incrementada'),
         'craft_table': Skill('craft_table', ('craft_table',), 'bancada observada, receita 3x3 desbloqueada, ingredientes e espaço no inventário',

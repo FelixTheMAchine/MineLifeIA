@@ -21,3 +21,10 @@ tasks.register('verifyControl', JavaExec) {
     mainClass = 'ai.minelife.ControlGateTest'
 }
 check.dependsOn verifyControl
+
+tasks.register('verifyShelter', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'ai.minelife.ShelterGeometryTest'
+}
+check.dependsOn verifyShelter

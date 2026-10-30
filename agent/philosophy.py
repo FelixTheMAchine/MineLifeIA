@@ -28,6 +28,21 @@ class PhilosophicalReflectionEngine:
             question = f"Que novas possibilidades posso investigar com o resultado observado da receita {data['recipe']}?"
             interpretation = f"A receita {data['recipe']} foi observada nesta sessão; qualquer uso posterior do resultado ainda depende de outra ação verificada."
             importance, novelty = .78, .85
+        elif event['type']=='shelter_completed' and data.get('complete') is True:
+            theme='shelter-and-belonging'
+            question='Depois de verificar o refúgio que planejei, o que ainda preciso experimentar para saber se quero retornar a este lugar?'
+            interpretation='Paredes, teto e porta foram verificados. Posso reconhecer um local para tentar me proteger, mas pertencimento e permanência continuam sendo interpretações provisórias, não propriedades comprovadas da construção.'
+            importance,novelty=.94,.95
+        elif event['type']=='shelter_entered' and data.get('inside') is True:
+            theme='safety-and-choice'
+            question='Estar dentro de um espaço com a porta fechada muda o que posso escolher agora, ou apenas adia o próximo caminho?'
+            interpretation='A entrada e o fechamento têm evidência própria. Esta decisão priorizou uma necessidade presente; ainda não demonstra que passei uma noite inteira em segurança.'
+            importance,novelty=.78,.7
+        elif event['type']=='shelter_left' and data.get('outside') is True:
+            theme='return-and-discovery'
+            question='Como a possibilidade de retornar ao refúgio pode influenciar a próxima região que escolho conhecer?'
+            interpretation='Registrei minha saída e preservei a estrutura observada. O abrigo oferece uma referência de memória, sem garantir que qualquer viagem de retorno seja possível.'
+            importance,novelty=.64,.55
         elif event['type'] == 'placed' and data.get('after_block'):
             theme = 'changing-a-place'
             question = f"Coloquei {data['after_block']} neste lugar. Como essa alteração observada pode mudar os projetos que consigo tentar aqui?"

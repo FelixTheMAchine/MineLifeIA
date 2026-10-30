@@ -27,8 +27,19 @@ final class Navigator {
     }
 
     boolean passable(BlockPos p) {
-        return mc.world.isChunkLoaded(p) && mc.world.getBlockState(p).getCollisionShape(mc.world, p).isEmpty()
+        var state=mc.world.getBlockState(p);
+        boolean openDoor=state.getBlock() instanceof net.minecraft.block.DoorBlock && state.get(net.minecraft.block.DoorBlock.OPEN);
+        return mc.world.isChunkLoaded(p) && (state.getCollisionShape(mc.world, p).isEmpty()||openDoor)
             && mc.world.getFluidState(p).isEmpty() && !hazardous(p);
+    }
+
+    private boolean doorwayTransition(BlockPos from,BlockPos to) {
+        if(!(mc.world.getBlockState(from).getBlock() instanceof net.minecraft.block.DoorBlock)
+                && !(mc.world.getBlockState(to).getBlock() instanceof net.minecraft.block.DoorBlock))return true;
+        if(from.getY()!=to.getY())return false;
+        Vec3d p=Vec3d.ofBottomCenter(from),d=Vec3d.ofBottomCenter(to).subtract(p);
+        // Open doors retain a thin collision panel; the swept player box must clear that panel.
+        return mc.world.isSpaceEmpty(mc.player,new net.minecraft.util.math.Box(p.x-.3,p.y,p.z-.3,p.x+.3,p.y+1.8,p.z+.3).stretch(d));
     }
 
     boolean walkable(BlockPos p) {
@@ -66,7 +77,7 @@ final class Navigator {
                 for (int dy : new int[]{0, 1, -1}) {
                     BlockPos next = p.offset(d).up(dy);
                     if (Math.abs(next.getX() - start.getX()) > 15 || Math.abs(next.getZ() - start.getZ()) > 15 ||
-                        Math.abs(next.getY() - start.getY()) > 5 || parent.containsKey(next) || !walkable(next)) continue;
+                        Math.abs(next.getY() - start.getY()) > 5 || parent.containsKey(next) || !walkable(next) || !doorwayTransition(p,next)) continue;
                     if (dy == 1 && !passable(p.up(2))) continue;
                     if (dy == -1 && !passable(next.up(2))) continue;
                     parent.put(next, p); queue.add(next); break;
@@ -94,7 +105,7 @@ final class Navigator {
             if (steps >= 18) continue;
             for (Direction d : Direction.Type.HORIZONTAL) for (int dy : new int[]{0,1,-1}) {
                 BlockPos next = p.offset(d).up(dy);
-                if (distance.containsKey(next) || next.getSquaredDistance(start)>13*13 || !walkable(next)) continue;
+                if (distance.containsKey(next) || next.getSquaredDistance(start)>13*13 || !walkable(next) || !doorwayTransition(p,next)) continue;
                 if (dy==1 && !passable(p.up(2)) || dy==-1 && !passable(next.up(2))) continue;
                 distance.put(next,steps+1); queue.add(next); break;
             }
@@ -106,7 +117,7 @@ final class Navigator {
     int tick() {
         if (route.isEmpty()) { release(); return 1; }
         BlockPos next = route.peek();
-        if (!walkable(next)) { release(); return -1; }
+        if (!walkable(next) || !doorwayTransition(mc.player.getBlockPos(),next)) { release(); return -1; }
         Vec3d pos = mc.player.getPos();
         Vec3d dest = Vec3d.ofBottomCenter(next);
         if (Math.abs(pos.x - dest.x) < .24 && Math.abs(pos.z - dest.z) < .24 && Math.abs(pos.y - dest.y) < .6) {

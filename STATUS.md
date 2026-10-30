@@ -1,6 +1,33 @@
-# MineLife AI — status 0.2.0 — 2026-10-29
+# MineLife AI — status 0.2.0 — 2026-10-30
 
-## Estado corrente — cadeia de recursos, bancada e fabricação
+## Estado corrente — primeiro refúgio por blueprint
+
+Continuação sobre `9e5770a`, com checkpoint local `safety/pre-shelter-20261029`. Implementação integrada ao executor e ao planejador existentes; o save não foi editado.
+
+- Blueprint compartilhado `refuge_v1`: footprint 3×3, interior 1×1 de dois blocos de altura, 16 tábuas, porta e 17 etapas. Sensor oferece terreno próximo livre/carregado; cálculo de materiais influencia coleta e crafting, incluindo receitas vanilla de portas. A reserva considera o que ainda falta, e a bancada é posicionada fora da obra/passagem.
+- `ConstructionPlanner` persiste projeto, etapas, evidências e revisões. `ShelterController` e a extensão de `BlockPlacementController` executam navegação, colocação física, salto nativo para alcançar o apoio do teto, interação com a porta, entrada e saída. O Java restringe os comandos à geometria e materiais do recurso empacotado.
+- Cada componente exige prova de bloco, consumo e USED. A conclusão exige uma inspeção final separada de paredes, teto, piso, interior e porta. Após reinício, presença de bloco é distinguida de colocação atribuível ao agente. Blocos inesperados são preservados; células vazias podem gerar uma etapa de reparo, sujeita a apoio e alcance.
+- `NightSurvivalManager` pode direcionar o personagem a um refúgio próximo inspecionado, confirmar entrada/porta fechada e reavaliar a estrutura a cada 15 s durante a espera. Ao amanhecer, pode sair e escolher outra atividade. Uma obra parcial pode ser deixada pela passagem existente se recursos/condições faltarem, sem ser registrada como abrigo pronto.
+- O navegador considera a colisão da folha de portas abertas, tanto na busca de caminho quanto na revalidação. F8/F9/F10, desconexão, perigo e cancelamento continuam ativos. A negociação exige `shelters-v1`; backend preserva compatibilidade com observações antigas, sem enviar construção a mod que não anuncia seus executores.
+- SQLite v4 adiciona somente `ConstructionProjects`/`ConstructionSteps`. Banco existente recebe backup antes da migração; versão mais nova é recusada, sem downgrade. `--dry-run` permite migrar uma cópia e comparar fingerprints de todas as tabelas anteriores.
+- Life Observer mostra projeto e etapas reais. Diário/filosofia distinguem conclusão inspecionada, entrada, saída e obra parcial; auditoria de blocos permanece persistida sem gerar reflexão a cada colocação. Entrar não é declarado como sobreviver a uma noite inteira. Nenhum diário real foi gerado a partir dos testes.
+
+### Verificação desta execução
+
+- `scripts/Test.ps1`: **92 testes Python passaram**; **build Fabric passou**. Inclui 136 assertions anteriores de controle/alimentação/sono e 389 verificações estáticas da geometria do blueprint e de painéis de porta; esses números não representam sessões ou cenários de gameplay.
+- Contrato Java HTTP/1.1 → FastAPI recebeu `inspect_shelter` a partir de observação sintética de terreno e confirmou a extensão negociada. Contratos anteriores de crafting/transporte continuam passando.
+- Testes de projeto cobrem material→porta→construção, 17 etapas→inspeção final→saída→novo objetivo, fome/pausa/perigo, retomada sem replay, prova ausente, projeto/alvo errado, mundo isolado, porta aberta, teto ausente, bloco inesperado, reparo por revisão e saída de obra parcial.
+- Migração v3→v4 e idempotência passaram em fixtures com backup. A cópia temporária da **memória real** preservou fingerprints das **28 tabelas anteriores**, com integridade verificada. A origem manteve os mesmos fingerprints e **não foi migrada nesta execução**.
+- A tentativa adicional de bootstrap de registries vanilla em JVM simples falhou por acesso que depende das transformações do Fabric Loader. Esse teste não é apresentado como validado; os testes geométricos são estáticos e estão rotulados. Detalhes em `docs/CONSTRUCTION.md`.
+- JAR gerado em `mod/build/libs/minelife-ai-0.2.0.jar`, **não instalado**. Minecraft não foi aberto, não houve gameplay e não foi solicitado teste manual. Mundo, memória de origem e diários privados preservados; publicação de diário permanece desligada.
+
+### Limites e próxima continuidade
+
+O refúgio é mínimo e local. Não nivela terreno, não contém cama ou iluminação, não constrói casas maiores e não garante defesa contra todos os perigos. Retorno distante, caça, cozinha/fornalha, uso automático de ferramentas, armazenamento e combate permanecem pendentes. Reparo só atua em célula vazia com apoio/face alcançáveis. A implementação física ainda depende de validação no cliente Fabric/MCA real.
+
+Próximas dependências viáveis: alimentação preparada em fornalha com combustível/retomada; seleção de ferramentas e mineração com drops corretos; depois ampliar o abrigo e rotas de retorno. A construção não encerra a autonomia. Consulte `docs/CONSTRUCTION.md` para critérios, evidências e limitações.
+
+## Etapa anterior — cadeia de recursos, bancada e fabricação (histórico)
 
 Continuação sobre `4b8b304`, preservando os avanços posteriores à base `5ec88a6`. Checkpoint local `safety/pre-workstations-20261029` criado antes da edição. O projeto não foi reiniciado.
 
