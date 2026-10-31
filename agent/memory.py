@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def now():
@@ -117,6 +117,26 @@ class MemoryManager:
             dimension TEXT NOT NULL,blueprint TEXT NOT NULL,anchor TEXT NOT NULL,status TEXT NOT NULL,
             reason TEXT NOT NULL,last_inspection TEXT,last_session TEXT,created TEXT NOT NULL,updated TEXT NOT NULL);
           CREATE INDEX IF NOT EXISTS construction_world ON ConstructionProjects(world,dimension);
+          CREATE TABLE IF NOT EXISTS FurnaceJobs(id TEXT PRIMARY KEY,world TEXT NOT NULL,dimension TEXT NOT NULL,
+            station TEXT NOT NULL,recipe TEXT NOT NULL,status TEXT NOT NULL,load_event TEXT,last_event TEXT,
+            last_session TEXT,inspection TEXT,revision INTEGER NOT NULL DEFAULT 0,created TEXT NOT NULL,updated TEXT NOT NULL);
+          CREATE INDEX IF NOT EXISTS furnace_jobs_world ON FurnaceJobs(world,dimension,status);
+          CREATE TABLE IF NOT EXISTS ReturnRoutes(id TEXT PRIMARY KEY,world TEXT NOT NULL,dimension TEXT NOT NULL,source TEXT NOT NULL,
+            destination TEXT NOT NULL,purpose TEXT NOT NULL,status TEXT NOT NULL,history TEXT NOT NULL,retry_after REAL NOT NULL,
+            start_distance REAL NOT NULL,created TEXT NOT NULL,updated TEXT NOT NULL);
+          CREATE INDEX IF NOT EXISTS return_routes_world ON ReturnRoutes(world,dimension,source);
+          CREATE TABLE IF NOT EXISTS CognitivePlans(id TEXT PRIMARY KEY,world TEXT NOT NULL,day INTEGER NOT NULL,
+            purpose TEXT NOT NULL,intent TEXT NOT NULL,preferred_subject TEXT,fields TEXT NOT NULL,sources TEXT NOT NULL,
+            fact_ids TEXT NOT NULL,facts_hash TEXT NOT NULL,status TEXT NOT NULL,revision_of TEXT,created TEXT NOT NULL,
+            expires REAL NOT NULL,claims_status TEXT NOT NULL);
+          CREATE INDEX IF NOT EXISTS cognitive_plans_world ON CognitivePlans(world,expires);
+          CREATE TABLE IF NOT EXISTS NarrativeDrafts(id TEXT PRIMARY KEY,world TEXT NOT NULL,day INTEGER NOT NULL,
+            text TEXT NOT NULL,claims TEXT NOT NULL,status TEXT NOT NULL,sources TEXT NOT NULL,created TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS Preferences(world TEXT NOT NULL,category TEXT NOT NULL,subject TEXT NOT NULL,
+            weight REAL NOT NULL,sources TEXT NOT NULL,updated TEXT NOT NULL,PRIMARY KEY(world,category,subject));
+          CREATE TABLE IF NOT EXISTS PreferenceUpdates(world TEXT NOT NULL,source TEXT NOT NULL,category TEXT NOT NULL,
+            subject TEXT NOT NULL,old_value REAL NOT NULL,new_value REAL NOT NULL,reason TEXT NOT NULL,created TEXT NOT NULL,
+            PRIMARY KEY(world,source,category,subject));
           CREATE TABLE IF NOT EXISTS ConstructionSteps(project TEXT NOT NULL,step INTEGER NOT NULL,
             status TEXT NOT NULL DEFAULT 'pending',item TEXT,evidence_id TEXT,revision INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY(project,step),FOREIGN KEY(project) REFERENCES ConstructionProjects(id));

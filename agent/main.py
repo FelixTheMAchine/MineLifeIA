@@ -13,7 +13,7 @@ from agent.protocol import Step
 from agent.llm import LanguageAdvisor
 from agent.skills import SkillRegistry
 
-BRIDGE_FEATURES = ['workstations-v1','shelters-v1']
+BRIDGE_FEATURES = ['workstations-v1','shelters-v1','mining-cooking-v1']
 BRIDGE_ACTIONS = sorted({action for skill in SkillRegistry.skills.values() for action in skill.actions})
 
 
@@ -87,21 +87,15 @@ def create_app(root=ROOT, config=None):
     async def step(payload: Step):
         async with lock:
             try:
-                engine.advice = advisor.result
                 response = engine.step(payload)
-                engine.record_advice(advisor.result)
-                if payload.active and payload.armed and not payload.player.danger:
-                    goals = engine.goals.rows(payload.world)
-                    available=[{'subject':g['subject'],'description':g['description']} for g in goals if g['status']=='pending'][:8]
-                    experiences=memory.rows('SELECT id,type,day,description,evidence FROM Events WHERE world=? AND verified=1 ORDER BY timestamp DESC LIMIT 8',(payload.world,))
-                    cue=' '.join(g['description'] for g in available[:4])
-                    recalled=engine.autobiography.recall(payload.world,cue,3) if cue else []
-                    philosophical=memory.rows('SELECT theme,question,interpretation,origin_event FROM PhilosophicalQuestions WHERE world=? ORDER BY created DESC LIMIT 4',(payload.world,))
-                    advisor.schedule({'world':payload.world, 'goals':available,
-                                      'knowledge':memory.rows('SELECT subject,status FROM Knowledge WHERE world=? LIMIT 30',(payload.world,)),
-                                      'experiences':experiences, 'source_event_ids':[e['id'] for e in experiences],
-                                      'recalled_memories':[{'day':m['day'],'theme':m['theme'],'summary':m['summary']} for m in recalled],
-                                      'philosophy':philosophical},'integrated')
+                suggestion=advisor.take_result()
+                if suggestion:
+                    engine.record_advice(suggestion)
+                    memory.db.commit()
+                if payload.active and payload.armed and not payload.player.danger and advisor.due():
+                    context=engine.language.context(payload,engine.goals.rows(payload.world),engine.motivation.values(payload.world),
+                        memory.rows('SELECT topic,intensity FROM Interests WHERE world=? ORDER BY intensity DESC LIMIT 8',(payload.world,)))
+                    advisor.schedule(context,'auto')
                 return response
             except ValueError as exc:
                 memory.db.rollback()

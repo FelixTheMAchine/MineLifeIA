@@ -1,10 +1,18 @@
 """Demand for executable, game-advertised recipes. Facts still require command evidence."""
 import math
 from agent.construction import ConstructionPlanner, DOORS, PLANKS
+from agent.cooking import CookingManager
 
 
 def ingredients(recipe):
     return recipe.get('inputs') or {recipe['input_id']: recipe.get('input_count', 1)}
+
+
+def has_tool(s,kind,tiers=None):
+    if s.player.tools:
+        return any(t.kind==kind and t.usable and t.max_damage-t.damage>=3
+                   and (tiers is None or any(t.id=='minecraft:'+tier+'_'+kind for tier in tiers)) for t in s.player.tools)
+    return any(k.endswith('_'+kind) and count>0 and (tiers is None or any(k=='minecraft:'+tier+'_'+kind for tier in tiers)) for k,count in s.player.inventory.items())
 
 
 def craft_evidence(recipe, evidence):
@@ -28,6 +36,7 @@ class CraftingPlanner:
     def __init__(self, memory):
         self.m = memory
         self.construction=ConstructionPlanner(memory)
+        self.cooking=CookingManager(memory,self.construction)
 
     def has_table(self, s):
         return any(b.id == 'minecraft:crafting_table' for b in s.blocks)
@@ -52,7 +61,7 @@ class CraftingPlanner:
 
     def needs_station(self,s):
         inv=s.player.inventory
-        tools=all(any(k.endswith(suffix) and v>0 for k,v in inv.items()) for suffix in ('_pickaxe','_axe'))
+        tools=all(has_tool(s,kind) for kind in ('pickaxe','axe'))
         return (self.construction.requirements(s)[1]>0 and not any(inv.get(k,0) for k in DOORS)
                 or not tools or inv.get('minecraft:wheat',0)>=3 and inv.get('minecraft:bread',0)<3
                 or inv.get('minecraft:cobblestone',0)>=8 and not inv.get('minecraft:furnace',0)
@@ -61,8 +70,8 @@ class CraftingPlanner:
     def demand(self, s, output):
         inv = s.player.inventory
         station = self.has_table(s) or self.remembered_table(s)
-        pickaxe = any(k.endswith('_pickaxe') and v > 0 for k, v in inv.items())
-        axe = any(k.endswith('_axe') and v > 0 for k, v in inv.items())
+        pickaxe = has_tool(s,'pickaxe')
+        axe = has_tool(s,'axe')
         if output == 'minecraft:crafting_table':
             return 0 if station or not self.needs_station(s) else 1
         if output.endswith('_planks'):
@@ -75,19 +84,25 @@ class CraftingPlanner:
         if output in DOORS:
             return 1 if self.construction.requirements(s)[1] and not any(inv.get(k,0) for k in DOORS) else 0
         if output == 'minecraft:stick':
-            return 4 if not pickaxe or not axe else 0
+            upgrade=(inv.get('minecraft:cobblestone',0)>=3 and any(not has_tool(s,k,('stone','iron','diamond','netherite')) for k in ('pickaxe','axe'))
+                     or inv.get('minecraft:iron_ingot',0)>=3 and any(not has_tool(s,k,('iron','diamond','netherite')) for k in ('pickaxe','axe')))
+            return 4 if not pickaxe or not axe or upgrade else 0
         if output.startswith('minecraft:wooden_'):
-            return 1 if (output.endswith('_pickaxe') and not pickaxe or output.endswith('_axe') and not axe) else 0
+            return inv.get(output,0)+1 if (output.endswith('_pickaxe') and not pickaxe or output.endswith('_axe') and not axe) else 0
         if output.startswith('minecraft:stone_'):
-            stronger = any(inv.get('minecraft:'+tier+'_'+output.split('_')[-1], 0) for tier in ('iron','diamond','netherite'))
-            return 0 if stronger else 1
-        return {'minecraft:bread': 3, 'minecraft:torch': 8, 'minecraft:furnace': 1, 'minecraft:chest': 1}.get(output, 0)
+            stronger = has_tool(s,output.split('_')[-1],('stone','iron','diamond','netherite'))
+            return 0 if stronger else inv.get(output,0)+1
+        if output.startswith('minecraft:iron_'):
+            stronger=has_tool(s,output.split('_')[-1],('iron','diamond','netherite'))
+            return 0 if stronger else inv.get(output,0)+1
+        if output=='minecraft:furnace':return 0 if any(b.id==output for b in s.blocks) else 1
+        return {'minecraft:bread': 3, 'minecraft:torch': 8, 'minecraft:chest': 1}.get(output, 0)
 
     def needs_wood(self, s):
         if not {'craft','place','craft_table'} <= set(s.capabilities):
             return False
         raw = sum(v*4 if k.endswith('_log') else v for k,v in s.player.inventory.items() if k.endswith(('_log','_planks')))
-        pickaxe = any(k.endswith('_pickaxe') and v > 0 for k,v in s.player.inventory.items())
+        pickaxe = has_tool(s,'pickaxe')
         budget=max(12 if not pickaxe else 4,self.construction.wood_demand(s))
         if self.construction.requirements(s)[1] and not any(s.player.inventory.get(k,0) for k in DOORS):
             total=sum(s.player.inventory.get(k,0) for k in PLANKS)
@@ -98,6 +113,14 @@ class CraftingPlanner:
     def proposals(self, s, personality):
         inv = s.player.inventory
         rows = []
+        if 'place' in s.capabilities and inv.get('minecraft:furnace',0) and self.cooking.need_furnace(s):
+            for spot in s.placement_spots:
+                project=self.construction.current(s)
+                if project and abs(spot.x-project['anchor']['x'])<=1 and -1<=spot.z-project['anchor']['z']<=2:continue
+                target=dict(x=spot.x,y=spot.y,z=spot.z,id='minecraft:furnace')
+                rows.append(dict(subject=f"place-furnace:{s.dimension}:{spot.x}:{spot.y}:{spot.z}",description='Colocar fornalha para preparar recursos observados',
+                                 reason='Receita de cozimento anunciada, fornalha no inventário e célula de apoio observada.',priority=230,
+                                 kind='place',skill='place_workstation',params=dict(target=target,placement=dict(item_id=target['id'],support=spot.support.model_dump()))))
         if not self.has_table(s) and self.needs_station(s) and {'approach','observe'}<=set(s.capabilities):
             for target in self.nearby_memories(s):
                 rows.append(dict(subject=f"return-table:{s.dimension}:{target['x']}:{target['y']}:{target['z']}",

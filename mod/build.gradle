@@ -28,3 +28,10 @@ tasks.register('verifyShelter', JavaExec) {
     mainClass = 'ai.minelife.ShelterGeometryTest'
 }
 check.dependsOn verifyShelter
+
+tasks.register('verifyTools', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'ai.minelife.ToolSelectionTest'
+}
+check.dependsOn verifyTools

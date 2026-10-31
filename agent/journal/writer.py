@@ -5,6 +5,8 @@ from pathlib import Path
 from uuid import uuid4
 from agent.memory import now
 from agent.motivation import PERSONALITY
+from agent.autobiography import Autobiography
+from agent.cognition import digest
 
 LEGACY_INTROS = ('Hoje registrei uma descoberta apoiada no que observei.',
                  'Hoje acompanhei minhas tentativas e as perguntas que elas trouxeram.')
@@ -64,19 +66,9 @@ class JournalWriter:
     def _related_memories(self, world, day, events):
         if not events:
             return []
-        cues = set((events[0]['description'] + ' ' + ' '.join(e['type'] for e in events)).lower().replace(':', ' ').split())
-        rows = self.memory.rows('SELECT lm.*,e.day source_day,e.verified FROM LifeMemories lm JOIN Events e '
-                                'ON e.id=lm.source_event AND e.world=lm.world WHERE lm.world=? AND e.day<? '
-                                'AND e.verified=1 ORDER BY lm.importance DESC,lm.novelty DESC,e.day DESC LIMIT 40',
-                                (world, day))
-        ranked = []
-        for row in rows:
-            terms = set((row['theme'] + ' ' + row['summary']).lower().replace(':', ' ').split())
-            overlap = sum(len(t) >= 4 for t in cues & terms)
-            if overlap:
-                ranked.append((row['importance'] + overlap * .03, row))
-        ranked.sort(key=lambda x: (x[0], x[1]['source_day']), reverse=True)
-        return [dict(row) for _, row in ranked[:1]]
+        cue=' '.join(e['description']+' '+e['type'] for e in events[:3])
+        rows=Autobiography(self.memory).recall(world,cue,12)
+        return [dict(row,source_day=row['day']) for row in rows if row['day']<day][:1]
 
     @staticmethod
     def _voice(event, style):
@@ -87,6 +79,18 @@ class JournalWriter:
             return 'Esta resposta observada me deixa uma nova margem para investigar, sem transformar possibilidades em fatos.'
         if kind == 'crafted':
             return 'A transformação dos itens e a estatística do servidor sustentam este resultado; o que construirei depois ainda está em aberto.'
+        if kind=='resource_mined':
+            if json.loads(event['evidence']).get('tool_id')=='minecraft:air':
+                return 'Esta remoção pôde ser feita com a mão vazia. Ainda preciso separar o que observei da utilidade que imagino para o material.'
+            return 'A ferramenta mudou a forma de agir sobre este material e sofreu desgaste. A remoção foi comprovada; o que recolherei exige outra observação.'
+        if kind=='inventory_gained':
+            return 'Posso considerar esse estoque nas próximas escolhas. A mudança observada não basta, sozinha, para explicar de qual bloco cada item veio.'
+        if kind=='planted':
+            return 'Deixei uma planta no solo que encontrei preparado. Essa escolha usa uma reserva presente para uma possibilidade futura; crescer e produzir continuam dependendo do mundo.'
+        if kind=='cooked':
+            return 'Entre separar os recursos e retirar o resultado houve uma transformação observada. Posso investigar o uso desse preparo sem confundi-lo com uma refeição já consumida.'
+        if kind=='furnace_recovered':
+            return 'Recuperei um item que encontrei na estação. Preservo a dúvida sobre etapas interrompidas em vez de preencher essa lacuna da memória com uma conquista.'
         if kind == 'placed':
             return 'Escolhi um espaço e coloquei ali uma estação. Registrei a mudança no mundo e o material gasto; o próximo uso ainda precisa acontecer.'
         if kind=='shelter_completed':
@@ -145,6 +149,16 @@ class JournalWriter:
 
     def _manifest(self, world, day, kind, events):
         event_ids = [e['id'] for e in events]
+        # A model may choose factual emphasis/order, never supply an unchecked factual sentence.
+        if kind=='daily':
+            plans=self.memory.rows("SELECT * FROM CognitivePlans WHERE world=? AND day=? AND claims_status='claims_verified' ORDER BY created DESC,rowid DESC LIMIT 1",(world,day))
+            if plans:
+                plan=plans[0];facts=[]
+                for eid in dict.fromkeys(json.loads(plan['sources'])):
+                    facts+=self.memory.rows('SELECT id,type,day,description FROM Events WHERE id=? AND world=? AND verified=1',(eid,world))
+                if digest(facts)==plan['facts_hash']:
+                    selected=[eid for eid in json.loads(plan['fact_ids']) if eid in event_ids]
+                    event_ids=selected+[eid for eid in event_ids if eid not in selected]
         thoughts = self._thoughts(world, day, event_ids)
         memories = self._related_memories(world, day, events) if kind == 'daily' else []
         return {'version': 3, 'world': world, 'day': day, 'kind': kind, 'event_ids': event_ids,
@@ -176,12 +190,12 @@ class JournalWriter:
             thoughts = self.memory.rows('SELECT q.*,r.current FROM PhilosophicalQuestions q JOIN PhilosophicalRevisions r '
                                         'ON r.world=q.world AND r.theme=q.theme AND r.origin_event=q.origin_event '
                                         'WHERE q.id IN (' + ','.join('?' for _ in manifest['thought_ids']) + ')', manifest['thought_ids']) if manifest['thought_ids'] else []
-            if {t['id'] for t in thoughts} != set(manifest['thought_ids']) or any(t['origin_event'] not in manifest['event_ids'] for t in thoughts):
+            if {t['id'] for t in thoughts} != set(manifest['thought_ids']) or any(t['world']!=entry['world'] or t['origin_event'] not in manifest['event_ids'] for t in thoughts):
                 return False
             memories = self.memory.rows('SELECT lm.*,e.day source_day,e.verified FROM LifeMemories lm JOIN Events e '
                                         'ON e.id=lm.source_event AND e.world=lm.world WHERE lm.id IN (' + ','.join('?' for _ in manifest['memory_ids']) + ')',
                                         manifest['memory_ids']) if manifest['memory_ids'] else []
-            if {m['id'] for m in memories} != set(manifest['memory_ids']) or any(not m['verified'] or m['source_day'] >= entry['day'] for m in memories):
+            if {m['id'] for m in memories} != set(manifest['memory_ids']) or any(m['world']!=entry['world'] or not m['verified'] or m['source_day'] >= entry['day'] for m in memories):
                 return False
             evidence_ids = set(manifest['event_ids']) | {t['origin_event'] for t in thoughts} | {m['source_event'] for m in memories}
             if set(json.loads(entry['evidence_ids'])) != evidence_ids:
@@ -197,12 +211,13 @@ class JournalWriter:
         if found:
             self.export_entry(found[0])
             return found[0]
-        events = self.memory.rows("SELECT * FROM Events WHERE world=? AND day=? AND verified=1 AND type NOT IN ('construction_step','shelter_inspected') "
+        events = self.memory.rows("SELECT * FROM Events WHERE world=? AND day=? AND verified=1 AND type NOT IN ('construction_step','shelter_inspected','furnace_inspected','furnace_loaded') "
                                   + ('AND id=? ' if event_id else '') + 'ORDER BY timestamp,id',
                                   (world, day, event_id) if event_id else (world, day))
         if not events:
             return None
         manifest = self._manifest(world, day, kind, events)
+        events=self._events(world,day,manifest['event_ids'])
         thoughts = self._thoughts(world, day, manifest['event_ids'])
         memories = self.memory.rows('SELECT lm.*,e.day source_day,e.verified FROM LifeMemories lm JOIN Events e '
                                     'ON e.id=lm.source_event AND e.world=lm.world WHERE lm.id IN (' + ','.join('?' for _ in manifest['memory_ids']) + ')',

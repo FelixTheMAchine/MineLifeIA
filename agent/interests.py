@@ -21,6 +21,8 @@ class InterestManager:
         return 'exploration'
 
     def update(self, s, topic, evidence_id, positive=True):
+        if not self.m.rows('SELECT 1 FROM Events WHERE id=? AND world=? AND verified=1',(evidence_id,s.world)):
+            return
         inserted = self.m.db.execute('INSERT OR IGNORE INTO InterestUpdates VALUES(?,?,?)',
                                      (s.world, topic, evidence_id)).rowcount
         if not inserted:
@@ -28,7 +30,10 @@ class InterestManager:
         self.m.db.execute("INSERT OR IGNORE INTO Interests VALUES(?,?,40,?,'[]',0,0,'[]')",
                           (s.world, topic, 'Experiência registrada: ' + evidence_id))
         row = self.m.rows('SELECT * FROM Interests WHERE world=? AND topic=?', (s.world, topic))[0]
-        intensity = min(95, max(5, row['intensity'] + (3 if positive else -2)))
+        import math
+        target=80 if positive else 20
+        rate=.05/math.sqrt(1+row['positive']+row['negative'])
+        intensity=round(row['intensity']+(target-row['intensity'])*rate,4)
         ids = (json.loads(row['evidence_ids']) + [evidence_id])[-50:]
         self.m.db.execute('UPDATE Interests SET intensity=?,evidence_ids=?,positive=positive+?,negative=negative+? '
                           'WHERE world=? AND topic=?',

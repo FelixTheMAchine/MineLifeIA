@@ -14,6 +14,16 @@ class Skill:
 class SkillRegistry:
     """Só habilidades com executor físico real; capacidades são negociadas com o mod."""
     skills = {
+        'plant_crop': Skill('plant_crop',('plant',),'solo arado vazio observado, semente, dia seguro e reserva alimentar',
+                            'bloco jovem no servidor, semente consumida e USED incrementado; crescimento é observado posteriormente'),
+        'furnace_load': Skill('furnace_load',('furnace_load',),'fornalha fria/vazia, receita observada, ingrediente e combustível suficientes',
+                              'servidor confirma transferência de uma unidade de cada; ainda não confirma preparo'),
+        'furnace_inspect': Skill('furnace_inspect',('furnace_inspect',),'estação carregada observada e interface acessível',
+                                 'conteúdo dos três slots e estado do fogo lidos no servidor'),
+        'furnace_take': Skill('furnace_take',('furnace_take',),'resultado ou recursos compatíveis com o trabalho persistido, inventário com espaço',
+                              'slot reduzido e inventário aumentado; produção só atribuída após carga previamente verificada'),
+        'mine_resource': Skill('mine_resource',('mine','pickup'),'recurso de superfície exposto, ferramenta adequada com reserva de durabilidade e rota segura',
+                               'servidor confirma remoção, MINED e desgaste da ferramenta; drops exigem inventário/coleta próprios'),
         'build_shelter': Skill('build_shelter',('build_shelter',),'projeto persistente, dia, materiais reservados, célula vazia e apoio alcançável',
                                'bloco de uma etapa, consumo e USED confirmados pelo servidor; não confirma o abrigo inteiro'),
         'inspect_shelter': Skill('inspect_shelter',('inspect_shelter',),'projeto conhecido no alcance local e chunks carregados',

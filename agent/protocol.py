@@ -18,6 +18,7 @@ class Block(Pos):
     log: bool
     harvestable: bool = False
     bed: bool = False
+    lit: bool = False
 
 
 class Player(StrictModel):
@@ -29,6 +30,16 @@ class Player(StrictModel):
     danger: bool
     inventory: dict[str, int]
     foods: list['FoodOffer'] = Field(default_factory=list, max_length=36)
+    tools: list['ToolStatus'] = Field(default_factory=list, max_length=36)
+
+
+class ToolStatus(StrictModel):
+    id: str = Field(pattern=r'^[a-z0-9_.-]+:[a-z0-9_./-]+$', max_length=128)
+    slot: int = Field(ge=0, le=35)
+    damage: int = Field(ge=0, le=100000)
+    max_damage: int = Field(ge=1, le=100000)
+    kind: Literal['pickaxe','axe','shovel','hoe','other']
+    usable: bool
 
 
 class FoodOffer(StrictModel):
@@ -93,6 +104,45 @@ class PlacementSpot(Pos):
         return self
 
 
+class MiningOffer(Pos):
+    id: str = Field(pattern=r'^minecraft:[a-z0-9_]+$', max_length=128)
+    tool_id: str = Field(pattern=r'^[a-z0-9_.-]+:[a-z0-9_./-]+$', max_length=128)
+    tool_slot: int = Field(ge=0, le=35)
+    tool_damage: int = Field(ge=0, le=100000)
+    tool_max_damage: int = Field(ge=0, le=100000)
+    tool_speed: float = Field(default=1, gt=0, le=1000)
+    tool_suitable: bool = True
+    tool_required: bool = True
+    tool_wear: int = Field(default=1, ge=0, le=1)
+    tool_material: str = Field(default='unknown', max_length=64)
+
+    @model_validator(mode='after')
+    def validate_durability(self):
+        if self.tool_id=='minecraft:air':
+            if self.tool_required or self.tool_damage or self.tool_max_damage or self.tool_wear or self.tool_slot>=9:
+                raise ValueError('Mão vazia só serve para um alvo que dispensa ferramenta')
+        elif self.tool_max_damage-self.tool_damage<3 or self.tool_wear!=1:
+            raise ValueError('Ferramenta sem reserva de durabilidade')
+        return self
+
+
+class CookingOffer(StrictModel):
+    id: str = Field(pattern=r'^minecraft:[a-z0-9_/]+$', max_length=128)
+    input_id: str = Field(pattern=r'^minecraft:[a-z0-9_]+$', max_length=128)
+    output_id: str = Field(pattern=r'^minecraft:[a-z0-9_]+$', max_length=128)
+    cook_ticks: int = Field(ge=1, le=200)
+    fuel_id: str | None = Field(default=None, pattern=r'^minecraft:[a-z0-9_]+$', max_length=128)
+    fuel_ticks: int = Field(ge=0, le=20000)
+
+    @model_validator(mode='after')
+    def validate_fuel(self):
+        if self.input_id==self.output_id or self.input_id==self.fuel_id or self.output_id==self.fuel_id:
+            raise ValueError('Receita de cozimento inválida')
+        if self.fuel_id is not None and self.fuel_ticks<self.cook_ticks:
+            raise ValueError('Uma unidade de combustível não cobre esta receita')
+        return self
+
+
 class Step(StrictModel):
     protocol: Literal[1]
     session: UUID
@@ -107,7 +157,7 @@ class Step(StrictModel):
     blocks: list[Block] = Field(max_length=128)
     results: list[Result] = Field(max_length=64)
     running: UUID | None = None
-    capabilities: list[str] = Field(default_factory=lambda: ['approach', 'break', 'collect'], max_length=16)
+    capabilities: list[str] = Field(default_factory=lambda: ['approach', 'break', 'collect'], max_length=24)
     control_state: Literal['ACTIVE', 'PAUSED', 'EMERGENCY_STOP', 'DISCONNECTED', 'DISABLED'] | None = None
     control_epoch: int = Field(default=0, ge=0)
     biome: str = Field(default='unknown', max_length=128)
@@ -117,3 +167,6 @@ class Step(StrictModel):
     items: list[ItemObservation] = Field(default_factory=list, max_length=24)
     placement_spots: list[PlacementSpot] = Field(default_factory=list, max_length=12)
     shelter_sites: list[Pos] = Field(default_factory=list, max_length=4)
+    mining: list[MiningOffer] = Field(default_factory=list, max_length=16)
+    cooking: list[CookingOffer] = Field(default_factory=list, max_length=16)
+    farmland: list[Pos] = Field(default_factory=list, max_length=12)

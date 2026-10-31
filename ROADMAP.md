@@ -4,13 +4,19 @@ O status diferencia implementação, validação automatizada e observação no 
 
 ## Implementado e coberto por testes locais
 
+- Mineração de superfície com ferramenta adequada escolhida pelas APIs do jogo, reserva de durabilidade, apoio/alcance e MINED/desgaste confirmados. Demanda de materiais, reposição de ferramenta gasta e crafting de melhorias de madeira/pedra/ferro. Coleta permanece uma confirmação separada.
+- Fornalha pela GUI nativa: fabricação/colocação, carga, inspeção e retirada por comandos separados. Trabalho SQLite por mundo, recuperação após interrupção/reinício, reserva de madeira, preparação de alimentos e processamento de ferro. Uma unidade por carga, sem uso otimizado de calor residual.
+- Plantio/replantio em solo arado existente e maturidade observada; reservas alimentares protegidas. Retorno persistente por segmentos locais anunciados, com chegada comprovada, bloqueios e prevenção de repetição.
+- LLM com contexto limitado, seleção conceitual de memórias e intenções estruturadas que influenciam metas executáveis. Revisões filosóficas geradas e prosa permanecem propostas/rascunhos, não fatos. Diário histórico imutável; seleção gerativa de fatos autorizados para futuras entradas. Preferências e interesses convergentes influenciam decisões.
+- Fechamento de 2026-10-30: 148 testes Python e build Java 21 passaram; contratos HTTP/1.1 de mineração, fornalha e plantio incluídos. Migração v5 ensaiada em cópia da memória real preservou 28 tabelas históricas. Sem execução gráfica nem inferência LLM real. Detalhes em [STATUS.md](STATUS.md).
+
 - Refúgio inicial por blueprint: terreno observado, requisitos de materiais/porta, projeto/etapas SQLite v4, colocação nativa e prova por componente. Inspeção final separada, retomada sem atribuição fictícia de blocos, reparo limitado e preservação de obstruções. 16 tábuas + uma porta; não é uma casa ampla.
 - Entrada/saída do refúgio com porta nativa e caminho local, espera noturna com inspeção periódica e retomada diurna de outros objetivos. Obra incompleta não é proteção confirmada; o personagem pode sair por uma passagem viável para procurar recursos. Geometria e contratos testados; sem gameplay nesta revisão.
 - Diário, reflexões e Observer acompanham as evidências do projeto. Migração ensaiada em cópia da memória real, preservando todas as tabelas antigas. Publicação automática permanece desligada.
 
-- Cadeia de fabricação com receitas anunciadas: recursos conhecidos podem ser repostos conforme estoque, tábuas/bancada/graveto em 2×2, colocação nativa de bancada e fabricação 3×3 de ferramentas/pão. O planejador respeita ingredientes, estação observada, capacidades e demanda; não termina após aprender uma receita. Ferramentas/fornalha/baú fabricados ainda não têm todos os seus usos automatizados.
+- Cadeia de fabricação com receitas anunciadas: recursos conhecidos podem ser repostos conforme estoque, tábuas/bancada/graveto em 2×2, colocação nativa de bancada e fabricação 3×3 de ferramentas/pão. O planejador respeita ingredientes, estação observada, capacidades e demanda; não termina após aprender uma receita. Uso de baús permanece pendente.
 - Colocação de estação: espaço livre, apoio sólido e alcance observados; item consumido e USED +1 confirmados. Sua prova é distinta da conclusão de um abrigo. Troca temporária de hotbar e interface de crafting possuem cancelamento; F8/F9/F10 continuam ativos nas telas pertencentes à ação.
-- HTTP/1.1 com extensão `workstations-v1`; incompatibilidade com backend antigo é diagnosticada antes de enviar novas observações. Teste de transporte Java–FastAPI também cobre a oferta e o comando 3×3.
+- HTTP/1.1 com extensões `workstations-v1`, `shelters-v1` e `mining-cooking-v1`; incompatibilidade com backend antigo é diagnosticada antes de enviar novas observações. Contratos Java–FastAPI cobrem ofertas e comandos das extensões.
 
 - Repouso noturno usando cama vanilla existente no Overworld: interação nativa, rota local e ausência de ameaça próxima revalidadas, com sucesso somente após estatística `SLEEP_IN_BED` e transição para o dia confirmadas pelo servidor. Sem cama, pode tentar refúgio próximo inspecionado; sem ambos, aguarda. Ainda sem teste em gameplay.
 
@@ -20,13 +26,14 @@ O status diferencia implementação, validação automatizada e observação no 
 - Controle do personagem local no integrado, autorização F8/F9/F10, pausa segura, handshake HTTP/1.1 autenticado e recuperação de desconexão.
 - Percepção local, observação de blocos visíveis, aproximação/mineração de troncos, prova de remoção/coleta, navegação segura em região local e crafting de receitas desbloqueadas 2×2 para tábuas, gravetos e bancada.
 - Cognição em ciclos limitados, objetivos por mundo, cooldowns, limites de repetição, oportunidades derivadas, exploração por fronteiras anunciadas e estado explícito de espera.
-- SQLite migrável com backup, personalidade/interesses que alteram prioridades e margem de segurança, memórias episódicas salientes, recuperação lexical e reflexões contextuais ligadas à evidência.
+- SQLite migrável com backup, personalidade/interesses que alteram prioridades e margem de segurança, memórias episódicas salientes, recuperação por conceitos/termos e reflexões contextuais ligadas à evidência.
 - Diário narrativo por eventos com manifest de proveniência, lembranças anteriores e interpretações provisórias. Rascunhos de LLM são persistidos como não verificados e nunca entram no conhecimento factual ou no diário publicável.
 - Alimentação de emergência com comida permitida nos slots principais 0–35: execução pela tecla nativa, confirmação de fome/inventário e restauração condicionada do slot. Prioridade sobre projetos e tentativas limitadas. Esta implementação ainda precisa de teste de gameplay.
 - Life Observer com mente estruturada e rascunhos rotulados. Publicador de diário para o repositório oficial, mas envio automático/publicação de diário permanecem desativados.
 
 ## Necessita validação no Minecraft desta versão
 
+- Mineração com ferramentas reais e trocas de hotbar, uso completo de fornalha com cancelamento durante cliques, retomada do processamento, ciclo de plantio/colheita e retorno em terreno alterado. Compilação e fixtures não validam execução física.
 - Construção física completa em terreno real: faces/raycast, salto para o beiral, colisões, portas, materiais no hotbar, restauração após interrupções, retorno noturno e saída diurna. Nenhuma combinação de testes estáticos ou fixtures é prova dessa execução.
 
 - Movimento 0.2, parada em perda de conexão, sensores, coleta/colheita, alimentação da última unidade, sono, exploração e autonomia prolongada.
@@ -37,12 +44,13 @@ Um teste anterior do MVP 0.1 confirmou quebra e coleta de um tronco de bétula e
 
 ## Próximas capacidades
 
-1. Completar obtenção/preparação de comida: fornalha real com combustível, retorno de resultados e retomada; plantio/replantio; eventual caça limitada a espécies permitidas. Coleta e colheita iniciais já existem, mas não constituem abastecimento completo.
-2. Usar ferramentas fabricadas e ampliar gestão de inventário: seleção apropriada, desgaste, mineração/drop específico, armaduras e armazenamento. O 3×3 atual já fabrica parte dos itens, mas não executa essas tarefas.
-3. Navegação por rotas maiores, memória de retorno, caminhos alternativos e recuperação de terreno; sem assumir que uma fronteira local seja segura para viajar longas distâncias.
+1. Ampliar a cozinha implementada para lotes e calor residual; preparar solo/irrigação e conservar sementes; eventual caça limitada a espécies permitidas. Coleta, replantio e preparo inicial não constituem abastecimento completo.
+2. Ampliar mineração além de superfícies expostas, tratamento de encantamentos/drops, gestão geral de inventário, armaduras e armazenamento. Preservar a seleção e as provas de ferramentas já implementadas.
+3. Ampliar rotas de retorno para desvios e múltiplos obstáculos; a implementação atual só escolhe trechos observados que aproximam do destino, sem certificar o trajeto inteiro.
 4. Ampliar o refúgio implementado: iluminação, cama, terreno/fundação, blueprints maiores, variantes arquitetônicas e reparos mais gerais. Um abrigo mínimo não implementa infraestrutura de vila nem defesa completa.
 5. Agricultura e mecanismos com verificação física; então estoques e economia de trocas reais.
 6. Inspecionar API e interfaces de MCA Reborn 7.7.19 no ambiente instalado; implementar memória social, interação, relacionamentos e família somente sobre interfaces reais validadas.
 7. Projetos comunitários e vila, dependentes de construção, sobrevivência, armazenagem e integração social já comprovadas.
+8. Validar um provedor LLM disponível, aprofundar revisão de interpretações e escrita original com revisão factual suficiente. Prosa livre continua sem autorização de publicação; nenhum modelo grande deve ser baixado automaticamente.
 
 Nenhuma etapa de combate, construção de estruturas, fazendas, comércio, integração social, casamento, família, vila ou sobrevivência prolongada deve ser marcada como feita até que exista executor real, evidência observável e validação apropriada. Não é necessário solicitar teste manual para continuar desenvolvendo dependências isoladas; mantenha a pendência de gameplay explícita.

@@ -44,7 +44,8 @@ final class CraftingController {
                 Set.of("minecraft:stick","minecraft:crafting_table","minecraft:bread","minecraft:torch",
                         "minecraft:furnace","minecraft:chest","minecraft:wooden_pickaxe","minecraft:wooden_axe",
                         "minecraft:wooden_shovel","minecraft:wooden_hoe","minecraft:stone_pickaxe",
-                        "minecraft:stone_axe","minecraft:stone_shovel","minecraft:stone_hoe").contains(id));
+                        "minecraft:stone_axe","minecraft:stone_shovel","minecraft:stone_hoe",
+                        "minecraft:iron_pickaxe","minecraft:iron_axe","minecraft:iron_shovel","minecraft:iron_hoe").contains(id));
     }
 
     private JsonObject describe(RecipeEntry<?> entry,BlockPos table) {

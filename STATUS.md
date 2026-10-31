@@ -1,6 +1,42 @@
 # MineLife AI — status 0.2.0 — 2026-10-30
 
-## Estado corrente — primeiro refúgio por blueprint
+## Estado corrente — recursos, preparo persistente e cognição contextual
+
+Continuação de `b860a0d`, com checkpoint local `safety/pre-mining-cooking-20261030`. Alterações locais preservadas. Nenhuma instalação de mod nem execução gráfica do Minecraft nesta sessão.
+
+### Implementação integrada
+
+- `ToolManager` usa propriedades reais das ferramentas (material, adequação, velocidade, durabilidade) para escolher uma opção suficiente de menor custo. Ferramentas sem reserva de durabilidade ou encantadas não são usadas nesta implementação. O planejador repõe ferramentas gastas, fabrica gravetos para melhorias e aceita receitas desbloqueadas de ferramentas de ferro, além de madeira/pedra.
+- `MiningController` minera um bloco exposto observado: pedra/pedregulho, carvão, ferro, troncos naturais, terra/grama e areia. Verifica apoio, vizinhança, alcance, rota e ferramenta; confirma remoção, MINED e desgaste no servidor. Não abre túneis nem remove tetos/suporte. Coleta por entidade e aumento de inventário durante mineração são fatos separados; o segundo não atribui origem individual aos itens.
+- `CookingManager`/`FurnaceController` conectam demanda de materiais, fabricação/colocação de fornalha, carga nativa de ingrediente/combustível, inspeção posterior e retirada. Alimentos vanilla permitidos e ferro bruto podem ser processados. Cada trabalho persiste por mundo/dimensão e fecha a GUI entre ações, permitindo outras atividades durante o preparo. Carga, produto retirado e refeição consumida exigem evidências próprias.
+- Cancelar/falhar uma operação de fornalha invalida a inspeção em cache: a próxima ação revalida os slots antes de transferir de novo. Após reinício, não repete comandos anteriores. Transferência parcial pode recuperar recursos; saída sem carga reconhecida é recuperação, nunca preparo atribuído. Inventário cheio, combustível ausente e conteúdo estranho não produzem sucesso fictício. A reserva de madeira do abrigo é preservada.
+- `AgriculturePlanner` e colocação nativa plantam/replantam trigo, cenoura, batata e beterraba em solo agrícola existente observado. Exigem consumo de semente, USED e bloco jovem no servidor. Crescimento e maturidade são observados posteriormente; não há preparação de solo, irrigação ou aceleração de ticks.
+- `RouteManager` persiste destinos de abrigo/preparo e trechos de retorno confirmados. Seleciona apenas fronteiras seguras anunciadas no entorno atual, evita repetição e registra bloqueios. Cada trecho requer chegada confirmada; o destino lembrado não certifica o caminho completo.
+- O adaptador LLM assíncrono recebe contexto limitado com fatos, hipóteses, memórias por conceitos e capacidades. Intenções estruturadas e válidas podem alterar prioridades de metas executáveis; pausa, fome e perigo continuam prevalecendo. Filosofia gerada preserva referências e revisões como propostas não verificadas. Prosa livre fica em `NarrativeDrafts`, fora de Knowledge e do diário publicável. Claims aceitas só selecionam/ordenam fatos exatos autorizados para novas entradas; entradas históricas não são reescritas.
+- Preferências adquiridas por material/bioma/valor e interesses têm mudanças graduais, origem registrada e influência limitada na seleção de objetivos. Recuperação autobiográfica usa conceitos, tipo de episódio, termos e saliência; não depende de embeddings. O Observer apresenta ferramentas, trabalhos, rotas, preferências, capítulos factuais e rascunhos separados.
+- SQLite v5 adiciona `FurnaceJobs`, `ReturnRoutes`, `CognitivePlans`, `NarrativeDrafts`, `Preferences` e `PreferenceUpdates`, com backup antes da migração. Bridge continua HTTP/1.1 e exige `mining-cooking-v1` no cliente novo; ações dependem das capabilities anunciadas. F8/F9/F10 e cancelamento comum incluem a GUI da fornalha.
+
+### Validação e correções de fechamento
+
+- `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test.ps1`: **148 testes Python passaram**, sem skips; **build Fabric passou**, Java **21.0.12.1**, Python **3.11.9**. A opção de execução vale somente para o processo do teste; a política global não foi modificada.
+- Verificações Java executadas: **136 assertions** de ControlGate/alimentação/sono, **389** de geometria estática do abrigo e **10** da política de ferramentas. Os cinco contratos Java contra FastAPI em socket loopback passaram (crafting, abrigo, mineração/ferramentas, fornalha e plantio), sem Upgrade. Há ainda teste HTTP de ack/deduplicação. São verificações automatizadas com fixtures, não gameplay.
+- A falha indicada em `test_insufficient_material_or_missing_station_cannot_craft_upgrade` vinha da expectativa de inatividade total: observar uma bancada desconhecida é uma meta válida independente de fabricar ferro sem ingredientes. O teste agora exige exatamente `approach`/`observe_block`, ausência de comando/resultado de crafting e recusa da receita. A ausência de bancada é verificada em fixture separada, sem comando pendente mascarando o caso.
+- A primeira execução geral encontrou `422` no contrato sintético de plantio: a fixture adicionava `support` a `farmland`, embora o sensor real envie apenas posições. A fixture foi alinhada ao sensor; o protocolo continua recusando campos extras. A execução geral seguinte passou.
+- Novos cenários incluem última ferramenta útil, reposição e melhorias, provas adulteradas, continuidade após mineração, carga interrompida e retomada imediata, pausa/emergência, falta de combustível, inventário cheio, reinício, limite de falhas, isolamento por mundo, plantio→colheita→replantio, rotas bloqueadas e rejeição de narrativas inventadas. Testes LLM demonstram influência na escolha de metas e preservação de fatos usando respostas sintéticas.
+- `python -m scripts.verify_memory_upgrade --dry-run`: **28 tabelas históricas com fingerprints preservados**, integridade confirmada na cópia migrada para v5; origem não migrada. `pip check`: nenhuma dependência inconsistente.
+- JAR: `mod/build/libs/minelife-ai-0.2.0.jar`, gerado e não instalado. Save `ia`, banco privado e diários históricos preservados. Publicação automática/pública do diário continua desligada.
+
+### Limitações efetivas
+
+Sem gameplay desta revisão: interação de GUI, cliques, navegação, plantio e prova física precisam de validação no cliente Fabric/MCA. Mineração é de superfície e conservadora, não mineração subterrânea geral. Ferramentas encantadas, inventário totalmente cheio e trocas sem slot vazio não são automatizados.
+
+A fornalha processa uma unidade por carga e requer estação vazia/fria; ainda não reaproveita calor restante para lotes sucessivos. Conteúdo conflitante é preservado e suspende aquela estação. Rotas usam progresso local em direção ao destino; não resolvem todos os desvios que exigem afastar-se dele, rios, montanhas ou chunks desconhecidos. Plantio reutiliza solo arado; não é uma fazenda completa.
+
+O provedor LLM local permanece `none`; Ollama não estava disponível na sondagem local. Nenhum modelo foi baixado e nenhuma inferência real foi validada. Escrita livre generativa permanece rascunho não verificado; o diário factual usa composição determinística com proveniência. Caça, combate, armazenamento, agricultura completa, MCA social, economia e comunidades continuam pendentes. O resultado não promete sobrevivência ilimitada.
+
+## Histórico — primeiro refúgio por blueprint
+
+Os registros abaixo descrevem etapas anteriores; limitações e contagens antigas não substituem o estado corrente acima.
 
 Continuação sobre `9e5770a`, com checkpoint local `safety/pre-shelter-20261029`. Implementação integrada ao executor e ao planejador existentes; o save não foi editado.
 

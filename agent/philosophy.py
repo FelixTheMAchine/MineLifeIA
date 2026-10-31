@@ -5,6 +5,15 @@ from agent.memory import now
 
 
 class PhilosophicalReflectionEngine:
+    def proposed_revisions(self,world):
+        """Generated questions with sources/revision links, explicitly outside factual journal prose."""
+        rows=self.m.rows("SELECT id,purpose,intent,fields,sources,revision_of,status,created FROM CognitivePlans "
+                         "WHERE world=? ORDER BY created DESC,rowid DESC LIMIT 24",(world,))
+        for row in rows:
+            row['fields']=json.loads(row['fields']);row['sources']=json.loads(row['sources'])
+            row['classification']='narrative_proposal_unverified'
+        return rows
+
     # Temas são acionados por experiências e limiares observáveis, nunca por sorteio periódico.
     def __init__(self, memory, autobiography):
         self.m, self.autobiography = memory, autobiography
@@ -28,6 +37,24 @@ class PhilosophicalReflectionEngine:
             question = f"Que novas possibilidades posso investigar com o resultado observado da receita {data['recipe']}?"
             interpretation = f"A receita {data['recipe']} foi observada nesta sessão; qualquer uso posterior do resultado ainda depende de outra ação verificada."
             importance, novelty = .78, .85
+        elif event['type']=='planted' and data.get('soil')=='minecraft:farmland':
+            theme='care-and-future'
+            question=f"Depois de plantar {data['after_block']}, como posso acompanhar uma possibilidade que ainda não se tornou alimento?"
+            interpretation='O plantio confirmou uma mudança presente no solo e o consumo de uma semente. Escolher esperar e observar o crescimento é um projeto, não uma colheita já obtida.'
+            importance,novelty=.8,.85
+        elif event['type']=='resource_mined' and data.get('tool_suitable') is True:
+            theme='means-and-limits'
+            question=f"Ao remover {data['before_block']} com {data['tool_id']}, que diferença consigo comprovar entre possuir uma ferramenta e saber quando utilizá-la?"
+            interpretation='A remoção e o desgaste desta ferramenta têm registro próprio. Não comparei velocidades nem demonstrei que ela serve para qualquer material; o resultado abre uma investigação, não uma regra universal.'
+            if data.get('tool_id')=='minecraft:air':
+                question=f"A remoção de {data['before_block']} dispensou uma ferramenta. Quando preparar um instrumento amplia minhas possibilidades e quando ele é desnecessário?"
+                interpretation='Confirmei uma remoção com a mão vazia. Essa experiência não demonstra que todos os materiais dispensam ferramentas.'
+            importance,novelty=.76,.8
+        elif event['type']=='cooked' and data.get('load_event'):
+            theme='preparation-and-time'
+            question=f"O preparo observado de {data['recipe']['output_id']} muda como quero reservar recursos antes de precisar deles?"
+            interpretation='A carga verificada e a retirada posterior ligam duas experiências separadas no tempo. Preparar algo ampliou uma possibilidade concreta; seu benefício final ainda depende de uso e contexto.'
+            importance,novelty=.86,.9
         elif event['type']=='shelter_completed' and data.get('complete') is True:
             theme='shelter-and-belonging'
             question='Depois de verificar o refúgio que planejei, o que ainda preciso experimentar para saber se quero retornar a este lugar?'
@@ -82,7 +109,10 @@ class PhilosophicalReflectionEngine:
         else:
             return None
 
-        prior = self.m.rows('SELECT current FROM PhilosophicalRevisions WHERE world=? AND theme=? ORDER BY created DESC LIMIT 1',
+        repeated=self.m.rows('SELECT id FROM PhilosophicalQuestions WHERE world=? AND theme=? AND question=? LIMIT 1',(world,theme,question))
+        if repeated:
+            return self.m.rows('SELECT * FROM PhilosophicalQuestions WHERE id=?',(repeated[0]['id'],))[0]
+        prior = self.m.rows('SELECT current FROM PhilosophicalRevisions WHERE world=? AND theme=? ORDER BY created DESC,rowid DESC LIMIT 1',
                             (world, theme))
         previous = prior[0]['current'] if prior else ''
         existing = self.m.rows('SELECT id FROM PhilosophicalQuestions WHERE world=? AND theme=? AND origin_event=?',

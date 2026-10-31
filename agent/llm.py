@@ -28,9 +28,26 @@ class LanguageAdvisor:
         self.result = None
         self.status = 'disabled'
         self.error = None
+        self.delivered=None
+        self.available_models=None
+        self.availability_checked=-1e30
+
+    def due(self):
+        if self.config.get('provider','none')=='none' or self.task and not self.task.done():return False
+        current=time.monotonic()
+        self.calls=[v for v in self.calls if current-v<3600]
+        return current-self.last_call>=max(30,self.config.get('interval_seconds',60)) and len(self.calls)<min(60,self.config.get('calls_per_hour',12))
+
+    def take_result(self):
+        if self.result is None:return None
+        key=hashlib.sha256(json.dumps(self.result,sort_keys=True).encode()).hexdigest()
+        if key==self.delivered:return None
+        self.delivered=key
+        return self.result
 
     def schedule(self, context, purpose='integrated'):
-        if self.config.get('provider', 'none') == 'none': return
+        if not self.due():return
+        if purpose=='auto':purpose=('cognitive','goal','philosophy','autobiography')[len(self.calls)%4]
         if purpose not in self.PURPOSES: raise ValueError('Tarefa de raciocínio desconhecida')
         if self.task and not self.task.done(): return
         current = time.monotonic()
@@ -38,7 +55,7 @@ class LanguageAdvisor:
         if current-self.last_call < max(30, self.config.get('interval_seconds',60)) or len(self.calls)>=min(60,self.config.get('calls_per_hour',12)): return
         key = hashlib.sha256((purpose + json.dumps(context,sort_keys=True)).encode()).hexdigest()
         if key in self.cache:
-            self.result = self.cache[key];self.status='cached';return
+            self.result = self.cache[key];self.status='cached';self.last_call=current;return
         self.last_call=current;self.calls.append(current)
         self.task=asyncio.create_task(self._run(context,key,purpose))
 
@@ -56,10 +73,16 @@ class LanguageAdvisor:
                        'Você auxilia um personagem artificial fictício no Minecraft. '+self.TASK_RULES[purpose]+' '
                        'Responda somente JSON com preferred_subject (nulo ou um subject exato da lista goals), '
                        'question, hypothesis, interpretation, reflection, journal_draft e social_interpretation. '
+                       'Inclua proposal={intent: uma chave exata de intents, evidence_ids: IDs relevantes de facts}. '
+                       'Inclua claims=[{event_id: ID de facts}] para selecionar e ordenar acontecimentos na autobiografia. '
+                       'Se incluir text em uma claim, copie exatamente description desse evento; não parafraseie fatos. '
+                       'O texto livre fica como rascunho não verificado; apenas claims vinculadas podem compor o diário factual. '
+                       'Uma intenção deve respeitar skills/executable; preferências nunca anulam fome, perigo ou controles de parada. '
                        'Separe interpretação e hipótese de fatos. Nunca afirme que ação ocorreu sem evidência explícita. '
                        'Não declare crafting, coleta, visita, relação, morte, construção ou resultado não incluído na memória. '
                        'Não emita comandos físicos, código, segredos ou caminhos locais. Use primeira pessoa somente como narrativa simulada.'},
-                      {'role':'user','content':json.dumps(context,ensure_ascii=False)[:10000]}]
+                      {'role':'user','content':json.dumps(context,ensure_ascii=False)}]
+            if len(messages[1]['content'])>14000:raise ValueError('Contexto excede orçamento')
             limit=min(1024,max(64,self.config.get('max_output_tokens',384)))
             headers={}
             if provider=='ollama':
@@ -72,17 +95,29 @@ class LanguageAdvisor:
                 payload=dict(model=model,messages=messages,max_completion_tokens=limit)
             else: raise ValueError('Provedor desconhecido')
             async with httpx.AsyncClient(timeout=15,transport=self.transport,follow_redirects=False,trust_env=False) as client:
+                if provider=='ollama' and time.monotonic()-self.availability_checked>300:
+                    tags=await client.get(base+'/api/tags',timeout=3)
+                    tags.raise_for_status()
+                    if len(tags.content)>65536:raise ValueError('Lista de modelos excessiva')
+                    self.available_models=[m.get('name') for m in tags.json().get('models',[]) if isinstance(m,dict)]
+                    self.availability_checked=time.monotonic()
+                if provider=='ollama' and model not in self.available_models and model+':latest' not in self.available_models:
+                    raise ValueError('Modelo Ollama não instalado; nenhum download automático')
                 response=await client.post(url,headers=headers,json=payload)
                 response.raise_for_status()
                 if len(response.content)>65536: raise ValueError('Resposta excessiva')
                 data=response.json()
             content=data['message']['content'] if provider=='ollama' else data['choices'][0]['message']['content']
             value=json.loads(content)
+            if not isinstance(value,dict):raise ValueError('Resposta estruturada inválida')
             allowed={g['subject'] for g in context.get('goals',[])}
             preferred=value.get('preferred_subject')
             if preferred not in allowed: preferred=None
             # Texto livre é mantido como sugestão NÃO VERIFICADA, fora do Knowledge/Journal factual.
             self.result={'world':context['world'],'preferred_subject':preferred,'purpose':purpose,
+                         'context_id':context.get('context_id'),
+                         'proposal':value.get('proposal') if isinstance(value.get('proposal'),dict) else None,
+                         'claims':value.get('claims',[]) if isinstance(value.get('claims',[]),list) else [],
                          'source_event_ids':[str(x) for x in context.get('source_event_ids',[])[:12]],
                          **{k:str(value.get(k,''))[:1000] for k in ('question','hypothesis','interpretation','reflection','journal_draft','social_interpretation')}}
             self.cache[key]=self.result
@@ -98,4 +133,6 @@ class LanguageAdvisor:
             except asyncio.CancelledError: pass
 
     def snapshot(self):
-        return {'status':self.status,'error':self.error,'calls_last_hour':len(self.calls),'suggestion_unverified':self.result}
+        return {'status':self.status,'error':self.error,'calls_last_hour':len(self.calls),'suggestion_unverified':self.result,
+                'available_models':self.available_models,'physical_commands':False,
+                'prose_validation':'Texto livre permanece não verificado; somente referências factuais validadas entram no diário.'}

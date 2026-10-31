@@ -3,11 +3,24 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
-from agent.memory import MemoryManager
+from agent.memory import MemoryManager, SCHEMA_VERSION
 from scripts.verify_memory_upgrade import fingerprint
 
 
 class MigrationTest(unittest.TestCase):
+    def test_v4_to_v5_adds_furnace_jobs_without_changing_old_fingerprints(self):
+        with tempfile.TemporaryDirectory() as td:
+            path=Path(td)/'memory.sqlite3';m=MemoryManager(path)
+            m.event('a'*64,'fixture',1,'observed','Fixture preservada.',True,{},'past')
+            new_tables=('FurnaceJobs','ReturnRoutes','CognitivePlans','NarrativeDrafts','Preferences','PreferenceUpdates')
+            for table in new_tables:m.db.execute('DROP TABLE '+table)
+            m.db.execute('PRAGMA user_version=4');m.close()
+            before=fingerprint(path);m=MemoryManager(path)
+            for table in new_tables:self.assertEqual(m.rows('SELECT * FROM '+table),[])
+            m.close()
+            self.assertEqual(before,fingerprint(path,before))
+            self.assertEqual(len(list((path.parent/'backups').glob('*.sqlite3'))),1)
+
     def test_v3_to_v4_preserves_all_old_tables_and_creates_one_verified_backup(self):
         with tempfile.TemporaryDirectory() as td:
             path=Path(td)/'memory.sqlite3'
@@ -18,7 +31,7 @@ class MigrationTest(unittest.TestCase):
             before=fingerprint(path)
             for _ in range(2):
                 m=MemoryManager(path)
-                self.assertEqual(m.db.execute('PRAGMA user_version').fetchone()[0],4)
+                self.assertEqual(m.db.execute('PRAGMA user_version').fetchone()[0],SCHEMA_VERSION)
                 self.assertEqual(m.rows('SELECT * FROM ConstructionProjects'),[])
                 m.close()
             self.assertEqual(before,fingerprint(path,before))
