@@ -14,6 +14,14 @@ class Skill:
 class SkillRegistry:
     """Só habilidades com executor físico real; capacidades são negociadas com o mod."""
     skills = {
+        'storage_inspect': Skill('storage_inspect',('storage_inspect',),'baú simples observado e interface acessível',
+                                 'slots do baú e inventário principal inspecionados no servidor'),
+        'storage_deposit': Skill('storage_deposit',('storage_deposit',),'baseline persistido, excedente livre e espaço compatível',
+                                 'uma unidade sai do inventário e entra no baú; demais slots preservados'),
+        'storage_withdraw': Skill('storage_withdraw',('storage_withdraw',),'baseline persistido, material de projeto e espaço compatível',
+                                  'uma unidade sai do baú e entra no inventário; demais slots preservados'),
+        'till_soil': Skill('till_soil',('till',),'solo vazio, enxada com reserva, água observada e dia seguro',
+                           'servidor confirma transformação em farmland, água próxima e desgaste da enxada'),
         'plant_crop': Skill('plant_crop',('plant',),'solo arado vazio observado, semente, dia seguro e reserva alimentar',
                             'bloco jovem no servidor, semente consumida e USED incrementado; crescimento é observado posteriormente'),
         'furnace_load': Skill('furnace_load',('furnace_load',),'fornalha fria/vazia, receita observada, ingrediente e combustível suficientes',

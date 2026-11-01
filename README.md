@@ -4,6 +4,12 @@ Agente experimental de vida artificial simulada que controla o personagem local 
 
 ## Estado alcançado
 
+### Atualização 2026-10-31
+
+O código e os testes automatizados agora cobrem baú vanilla simples com 27 slots, logística de uma unidade por operação e intenção persistida antes do comando, reconciliada sem atribuição de autoria. Reservas derivadas cobrem projetos persistentes de construção, fornalha, crafting e necessidades básicas; não há gerenciador genérico de reservas. Fornalhas encadeiam unidades usando calor residual observado e reinspeção. Rotas planejam desvios observados limitados a três segmentos, seis blocos por segmento e 64 blocos no total. Plantio exige umidade observada positiva, semente reservada e enxada comum; não usa ferramentas encantadas ou inquebráveis. O cancelamento por fome durante trabalho aguarda confirmação de cancelamento correlacionada antes de comer.
+
+Esta revisão ainda não foi instalada nem executada no Minecraft; build e contratos/testes sintéticos não provam gameplay. Consulte o registro de validação corrente em [STATUS.md](STATUS.md). A integração MCA e execução em vários dias continuam pendentes.
+
 A versão atual desenvolve um ciclo contínuo de observação, necessidades, memória, seleção de objetivos, ações e reflexão. Há percepção local, navegação BFS, retorno por segmentos observados, mineração de superfície com seleção de ferramentas, coleta, colheita/replantio, alimentação, repouso em cama existente, crafting 2×2/3×3, preparo persistente em fornalha e construção por etapas de um pequeno refúgio. SQLite, diário e painel preservam a separação entre tentativas e resultados comprovados. F8 autoriza, F9 pausa/retoma e F10 interrompe.
 
 O código Java compila e a comunicação HTTP/1.1 Java–FastAPI foi exercitada em loopback com fixtures. O comportamento desta versão e o crafting **ainda precisam de validação na interface real do Minecraft**. Uma sessão anterior do MVP 0.1 confirmou a descoberta de um tronco de bétula e a persistência do diário; isso não comprova o novo executor de crafting nem toda a versão 0.2. Consulte [STATUS.md](STATUS.md) para a verificação corrente.
@@ -35,7 +41,7 @@ Se o launcher usa outro diretório, passe seu caminho real em `-MinecraftDir`. O
 
 O painel local fica em `http://127.0.0.1:8765`. Cole nele o token local de `config/local.json`; o navegador o mantém apenas em memória. Não compartilhe esse token. F8 desativa/reativa, F9 pausa/retoma e F10 é a parada de emergência, que exige F8 para rearmar. Interface externa à ação, perda de foco, perigo físico ou heartbeat ausente liberam o controle e interrompem a ação. Bancada/fornalha abertas pelos controladores e a tela de sono são exceções controladas; F8/F9/F10 continuam sendo lidas nessas telas. `Stop-MineLife.ps1` solicita parada autenticada do backend.
 
-Ao atualizar esta revisão, reinicie o backend antigo: `/health` e o handshake devem anunciar `mining-cooking-v1`, além de `shelters-v1` e `workstations-v1`. O script recusa reutilizar processo antigo, mesmo que ambos mostrem versão 0.2.0. Atualize o mod pelo instalador apenas com Minecraft fechado e backup; compilar não instala automaticamente o JAR. No próximo início, o backend faz backup antes da migração aditiva SQLite v5 para preparo, rotas, propostas cognitivas e preferências.
+Ao atualizar esta revisão, reinicie o backend antigo: `/health` e o handshake devem anunciar as capabilities suportadas. O script recusa reutilizar processo antigo incompatível, mesmo que ambos mostrem versão 0.2.0. Atualize o mod pelo instalador apenas com Minecraft fechado e backup; compilar não instala automaticamente o JAR. O backend cria backup antes da migração aditiva SQLite; a revisão corrente usa esquema v6.
 
 ## Cognição, evidência e memória
 

@@ -63,9 +63,14 @@ class CraftingPlanner:
         inv=s.player.inventory
         tools=all(has_tool(s,kind) for kind in ('pickaxe','axe'))
         return (self.construction.requirements(s)[1]>0 and not any(inv.get(k,0) for k in DOORS)
-                or not tools or inv.get('minecraft:wheat',0)>=3 and inv.get('minecraft:bread',0)<3
+                or not tools or self.needs_hoe(s) or inv.get('minecraft:wheat',0)>=3 and inv.get('minecraft:bread',0)<3
                 or inv.get('minecraft:cobblestone',0)>=8 and not inv.get('minecraft:furnace',0)
                 or sum(v for k,v in inv.items() if k.endswith('_planks'))>=8 and not inv.get('minecraft:chest',0))
+
+    def needs_hoe(self,s):
+        return ('till' in s.capabilities and not has_tool(s,'hoe') and not s.farmland
+                and any(s.player.inventory.get(item,0)>=2 for item in
+                        ('minecraft:wheat_seeds','minecraft:beetroot_seeds','minecraft:carrot','minecraft:potato')))
 
     def demand(self, s, output):
         inv = s.player.inventory
@@ -86,9 +91,10 @@ class CraftingPlanner:
         if output == 'minecraft:stick':
             upgrade=(inv.get('minecraft:cobblestone',0)>=3 and any(not has_tool(s,k,('stone','iron','diamond','netherite')) for k in ('pickaxe','axe'))
                      or inv.get('minecraft:iron_ingot',0)>=3 and any(not has_tool(s,k,('iron','diamond','netherite')) for k in ('pickaxe','axe')))
-            return 4 if not pickaxe or not axe or upgrade else 0
+            return 4 if not pickaxe or not axe or upgrade or self.needs_hoe(s) else 0
         if output.startswith('minecraft:wooden_'):
-            return inv.get(output,0)+1 if (output.endswith('_pickaxe') and not pickaxe or output.endswith('_axe') and not axe) else 0
+            return inv.get(output,0)+1 if (output.endswith('_pickaxe') and not pickaxe or output.endswith('_axe') and not axe
+                                          or output.endswith('_hoe') and self.needs_hoe(s)) else 0
         if output.startswith('minecraft:stone_'):
             stronger = has_tool(s,output.split('_')[-1],('stone','iron','diamond','netherite'))
             return 0 if stronger else inv.get(output,0)+1

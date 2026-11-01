@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def now():
@@ -121,6 +121,10 @@ class MemoryManager:
             station TEXT NOT NULL,recipe TEXT NOT NULL,status TEXT NOT NULL,load_event TEXT,last_event TEXT,
             last_session TEXT,inspection TEXT,revision INTEGER NOT NULL DEFAULT 0,created TEXT NOT NULL,updated TEXT NOT NULL);
           CREATE INDEX IF NOT EXISTS furnace_jobs_world ON FurnaceJobs(world,dimension,status);
+          CREATE TABLE IF NOT EXISTS StorageJobs(id TEXT PRIMARY KEY,world TEXT NOT NULL,dimension TEXT NOT NULL,
+            station TEXT NOT NULL,status TEXT NOT NULL,inspection TEXT,last_session TEXT,intent TEXT,last_event TEXT,
+            revision INTEGER NOT NULL DEFAULT 0,created TEXT NOT NULL,updated TEXT NOT NULL);
+          CREATE INDEX IF NOT EXISTS storage_jobs_world ON StorageJobs(world,dimension,status);
           CREATE TABLE IF NOT EXISTS ReturnRoutes(id TEXT PRIMARY KEY,world TEXT NOT NULL,dimension TEXT NOT NULL,source TEXT NOT NULL,
             destination TEXT NOT NULL,purpose TEXT NOT NULL,status TEXT NOT NULL,history TEXT NOT NULL,retry_after REAL NOT NULL,
             start_distance REAL NOT NULL,created TEXT NOT NULL,updated TEXT NOT NULL);

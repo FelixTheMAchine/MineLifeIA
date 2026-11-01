@@ -143,6 +143,28 @@ class CookingOffer(StrictModel):
         return self
 
 
+class FarmlandObservation(Pos):
+    moisture: int = Field(default=-1, ge=-1, le=7)
+    water: Pos | None = None
+
+
+class TillingOffer(Pos):
+    id: Literal['minecraft:dirt', 'minecraft:grass_block']
+    tool_id: str = Field(pattern=r'^minecraft:[a-z0-9_]+_hoe$', max_length=128)
+    tool_slot: int = Field(ge=0, le=35)
+    tool_damage: int = Field(ge=0, le=100000)
+    tool_max_damage: int = Field(ge=1, le=100000)
+    water: Pos
+
+    @model_validator(mode='after')
+    def validate_tilling(self):
+        if self.tool_max_damage-self.tool_damage < 3:
+            raise ValueError('Enxada sem reserva de durabilidade')
+        if abs(self.water.x-self.x)>4 or abs(self.water.z-self.z)>4 or self.water.y not in (self.y,self.y+1):
+            raise ValueError('Agua fora do alcance de hidratacao')
+        return self
+
+
 class Step(StrictModel):
     protocol: Literal[1]
     session: UUID
@@ -157,7 +179,7 @@ class Step(StrictModel):
     blocks: list[Block] = Field(max_length=128)
     results: list[Result] = Field(max_length=64)
     running: UUID | None = None
-    capabilities: list[str] = Field(default_factory=lambda: ['approach', 'break', 'collect'], max_length=24)
+    capabilities: list[str] = Field(default_factory=lambda: ['approach', 'break', 'collect'], max_length=32)
     control_state: Literal['ACTIVE', 'PAUSED', 'EMERGENCY_STOP', 'DISCONNECTED', 'DISABLED'] | None = None
     control_epoch: int = Field(default=0, ge=0)
     biome: str = Field(default='unknown', max_length=128)
@@ -169,4 +191,6 @@ class Step(StrictModel):
     shelter_sites: list[Pos] = Field(default_factory=list, max_length=4)
     mining: list[MiningOffer] = Field(default_factory=list, max_length=16)
     cooking: list[CookingOffer] = Field(default_factory=list, max_length=16)
-    farmland: list[Pos] = Field(default_factory=list, max_length=12)
+    farmland: list[FarmlandObservation] = Field(default_factory=list, max_length=12)
+    tilling: list[TillingOffer] = Field(default_factory=list, max_length=12)
+    storage: list[Pos] = Field(default_factory=list, max_length=8)

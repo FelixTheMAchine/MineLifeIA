@@ -20,6 +20,7 @@ from agent.cognition import CognitiveLanguageEngine
 from agent.identity import IdentityEngine
 from agent.routes import RouteManager
 from agent.agriculture import AgriculturePlanner
+from agent.storage import StorageManager, MATERIALS as STORAGE_MATERIALS
 
 
 def valid_inventory(value):
@@ -46,6 +47,7 @@ class CognitiveEngine:
         self.identity=IdentityEngine(memory)
         self.routes=RouteManager(memory)
         self.agriculture=AgriculturePlanner(memory)
+        self.storage=StorageManager(memory,self.construction,self.crafting,clock)
         self.philosophy = PhilosophicalReflectionEngine(memory, self.autobiography)
         self.sessions, self.last_plan, self.command_sent = {}, {}, {}
         self.latest, self.last_seen, self.control = None, 0.0, None
@@ -73,6 +75,7 @@ class CognitiveEngine:
 
     def _command(self, s, exp, action, **extra):
         payload = dict(id=str(uuid4()), action=action, target=json.loads(exp['target']), timeout_ms=20000, **extra)
+        if action.startswith('storage_'):self.storage.prepare_command(s,payload)
         self.m.db.execute('INSERT INTO Commands VALUES(?,?,?,?,?,?,?,?)',
                           (payload['id'], s.world, str(s.session), exp['id'], json.dumps(payload), 'sent', None, now()))
         self.command_sent[payload['id']] = self.clock()
@@ -81,6 +84,10 @@ class CognitiveEngine:
                      'collect': 'Verificando coleta', 'observe': 'Verificando um bloco',
                      'mine': 'Minerando um recurso exposto com ferramenta adequada',
                      'plant':'Plantando em solo agrícola existente',
+                     'till':'Preparando solo próximo de água observada',
+                     'storage_inspect':'Revalidando baú e inventário',
+                     'storage_deposit':'Guardando uma unidade excedente no baú',
+                     'storage_withdraw':'Recuperando uma unidade para um projeto',
                      'furnace_load':'Carregando ingrediente e combustível', 'furnace_inspect':'Inspecionando o preparo persistido',
                      'furnace_take':'Retirando itens da fornalha com verificação',
                      'craft': 'Fabricando na grade 2×2', 'craft_table': 'Fabricando na bancada 3×3',
@@ -146,6 +153,7 @@ class CognitiveEngine:
     def _failure(self, s, exp, cmd, reason, status='failed'):
         gid = self._goal_id(exp)
         if cmd['action'] in FURNACE_ACTIONS:self.cooking.interrupt(s,cmd)
+        if cmd['action'].startswith('storage_'):self.storage.interrupt(s,cmd)
         self.m.db.execute('UPDATE Experiments SET status=? WHERE id=?', (status, exp['id']))
         self.m.db.execute('UPDATE Goals SET status=? WHERE id=?', (status, gid))
         personality = self.motivation.values(s.world)
@@ -209,6 +217,22 @@ class CognitiveEngine:
                 eid=self._event(s,'resource_mined',f"Removi {target['id']} usando {method}. O servidor confirmou a mineração e a variação de durabilidade de {cmd['mining'].get('tool_wear',1)} unidade(s); os itens no chão ainda precisam de coleta verificada.",ev,cmd['id'])
                 self._knowledge(s,subject,'confirmed',eid)
                 self._inventory_gains(s,cmd,ev,eid)
+        elif action.startswith('storage_'):
+            valid &= self.storage.validate(s,cmd,ev)
+            if valid:
+                subject='storage:'+cmd['storage']['job_id']
+                kind={'storage_inspect':'storage_inspected','storage_deposit':'storage_deposited','storage_withdraw':'storage_withdrawn'}[action]
+                text={'storage_inspect':'Inspecionei os slots do baú e meu inventário. Esta observação não atribui transferências anteriores sem confirmação.',
+                      'storage_deposit':'Guardei uma unidade de recurso no baú. A origem, o destino e a conservação dos demais slots foram confirmados pelo servidor.',
+                      'storage_withdraw':'Retirei uma unidade de recurso do baú. A origem, o destino e a conservação dos demais slots foram confirmados pelo servidor.'}[action]
+                eid=self._event(s,kind,text,ev,cmd['id'])
+                self.storage.accept(s,cmd,ev,eid)
+        elif action=='till':
+            valid &= self.agriculture.validate_till(s,cmd,ev)
+            if valid:
+                subject='agriculture:tilling'
+                eid=self._event(s,'soil_tilled','Preparei uma célula de solo com enxada. O servidor confirmou o solo arado, a água próxima e o desgaste; hidratação e produção ainda precisam ser observadas.',ev,cmd['id'])
+                self._knowledge(s,subject,'confirmed',eid)
         elif action=='plant':
             valid &= self.agriculture.validate(s,cmd,ev)
             if valid:
@@ -290,6 +314,8 @@ class CognitiveEngine:
                 job=self.cooking.current(s);r=job['recipe'];subject='cooking:'+r['id']
                 kind='furnace_inspected' if action=='furnace_inspect' else 'furnace_loaded'
                 text='Inspecionei o conteúdo real da fornalha antes de continuar o preparo.' if action=='furnace_inspect' else f"Transferi uma unidade de {r['input_id']} e uma de {r['fuel_id']} para a fornalha; ainda preciso verificar o resultado."
+                if action=='furnace_load' and r['fuel_id'] is None:
+                    text=f"Transferi uma unidade de {r['input_id']} para a fornalha usando calor restante observado; ainda preciso verificar o resultado."
                 if action=='furnace_take':
                     slot=ev['take_slot'];item=ev['before']['slots'][slot]['id']
                     kind='cooked' if slot==2 and job['load_event'] else 'furnace_recovered'
@@ -386,7 +412,7 @@ class CognitiveEngine:
         for result in s.results: changed = self._result(s, result) or changed
         self.journal.finalize_before(s.world, s.day)
         response = dict(protocol=1, session=sid, seq=s.seq, control_epoch=s.control_epoch,
-                        ack=[str(r.id) for r in s.results], control=self.control, command=None)
+                        ack=[str(r.id) for r in s.results], control=self.control, command=None,interrupt=None)
         self.control = None
         health_limit, food_limit = self.motivation.safety_limits(s.world)
         unsafe = s.player.health <= health_limit or s.player.danger
@@ -398,7 +424,16 @@ class CognitiveEngine:
             self._state(s, 'EMERGENCY_STOP', 'Parada explícita; F8 necessário')
         elif not s.active or not s.armed or response['control'] == 'pause':
             self._state(s, 'PAUSED', 'Controle pausado ou sem autorização local')
-        else: response['command'] = self.decide(s, changed or previous is None)
+        else:
+            pending=self.m.rows("SELECT id,payload FROM Commands WHERE world=? AND session=? AND status='sent' ORDER BY created DESC LIMIT 1",(s.world,sid))
+            edible=any(self._safe_food(f.model_dump(),s.player.inventory) for f in s.player.foods)
+            interruptible={'storage_inspect','storage_deposit','storage_withdraw','build_shelter','mine','explore','till','furnace_inspect','furnace_load','furnace_take'}
+            if pending and s.player.food<=food_limit and edible and 'eat' in s.capabilities and json.loads(pending[0]['payload'])['action'] in interruptible:
+                # Await the client's cancellation result before planning a meal.
+                # The click may already have reached the server; its intention stays intact.
+                response['interrupt']=pending[0]['id']
+                self._state(s,'SURVIVAL','Interromper trabalho atual para usar alimento disponível; preservar o progresso.')
+            else:response['command'] = self.decide(s, changed or previous is None)
         if not s.active or not s.armed or unsafe or response['control'] in ('stop', 'pause'):
             self.m.db.execute("UPDATE Goals SET status='suspended' WHERE world=? AND status='running'", (s.world,))
         response.update(state=self.state, reason=self.reason)
@@ -530,6 +565,10 @@ class CognitiveEngine:
             if s.dimension!='minecraft:overworld': reason='Repouso em cama não disponível nesta dimensão; aguardando condição segura.'
             self._state(s, 'WAITING_FOR_SAFE_ACTION', reason)
             return None
+        farm_drop=self.agriculture.pending_drop(s)
+        if farm_drop is not None:
+            command=self._start_pickup(s,farm_drop,255,'Recolher sementes ou produtos observados perto de um cultivo colhido; a origem do item ainda não foi atribuída.','SHORT_TERM')
+            if command:return command
         if 'pickup' in s.capabilities:
             reserve=sum(v for k,v in s.player.inventory.items() if any(f.id==k for f in s.player.foods) and self.foods.safe_id(k))
             item=self.foods.choose(s.items,s.player,s.player.inventory,20) if reserve<3 else None
@@ -539,6 +578,21 @@ class CognitiveEngine:
                 command=self._start_pickup(s,item,200,'Formar reserva pequena com alimento ou trigo observado.','SHORT_TERM')
                 if command:return command
         self.construction.prepare(s)
+        storage=self.storage.propose(s)
+        if storage:
+            command=self._offer_project(s,storage)
+            if command:return command
+        storage_job=self.storage.current(s)
+        storage_reserves=self.storage.reservations(s) if storage_job else {}
+        storage_needed=(storage_job and (storage_job['status'] in ('intent','uncertain')
+                        or any(n>s.player.inventory.get(item,0) for item,n in self.storage.demands(s).items())
+                        or any(n>storage_reserves.get(item,0) for item,n in s.player.inventory.items()
+                               if item in STORAGE_MATERIALS)))
+        if storage_needed:
+            route=self.routes.request(s,storage_job['station'],'storage:'+storage_job['id'],'Retornar ao baú para revalidar materiais armazenados')
+            if route:
+                command=self._offer_project(s,route)
+                if command:return command
         drop=self.mining.pending_drop(s)
         if drop is not None and 'pickup' in s.capabilities:
             command=self._start_pickup(s,drop,250,'Recolher recurso necessário já observado antes de minerar outro bloco.','SHORT_TERM')
@@ -640,13 +694,13 @@ class CognitiveEngine:
         self.m.db.execute("INSERT OR IGNORE INTO Hypotheses VALUES(?,?,?,?,'hypothesis','[]')",
                           (hypothesis,s.world,goal['description'],'O experimento pode produzir evidência para este objetivo.'))
         hypothesis=self.m.rows('SELECT id FROM Hypotheses WHERE world=? AND question=?',(s.world,goal['description']))[0]['id']
-        phase=goal['kind'] if goal['kind'] in ('craft','craft_table','place','explore','mine','plant',*SHELTER_ACTIONS,*FURNACE_ACTIONS) else 'approach'
+        phase=goal['kind'] if goal['kind'] in ('craft','craft_table','place','explore','mine','plant','till','storage_inspect','storage_deposit','storage_withdraw',*SHELTER_ACTIONS,*FURNACE_ACTIONS) else 'approach'
         exp=dict(id=str(uuid4()),world=s.world,session=str(s.session),hypothesis=hypothesis,
                  target=json.dumps(params['target'],sort_keys=True),phase=phase,status='running',evidence_ids='[]')
         self.m.db.execute('INSERT INTO Experiments VALUES(:id,:world,:session,:hypothesis,:target,:phase,:status,:evidence_ids)',exp)
         self.m.db.execute('INSERT INTO ExperimentGoals VALUES(?,?)',(exp['id'],goal['id']))
         self.m.db.execute("UPDATE Goals SET status='running' WHERE id=?",(goal['id'],))
-        extra={k:params[k] for k in ('recipe','placement','shelter','mining','furnace','route','planting') if k in params}
+        extra={k:params[k] for k in ('recipe','placement','shelter','mining','furnace','route','planting','tilling','storage') if k in params}
         return self._command(s,exp,phase,**extra)
 
     def _start_eat(self,s,food):
@@ -749,7 +803,7 @@ class CognitiveEngine:
         tables = {}
         for table in ('Knowledge','Hypotheses','Experiments','Goals','JournalEntries','PublicationQueue','Questions',
                       'Interests','Motivations','SpatialRegions','Reflections','SkillProgress','PersonalityChanges',
-                      'LifeMemories','PhilosophicalQuestions','PhilosophicalRevisions','CognitiveSuggestions','ConstructionProjects','FurnaceJobs',
+                      'LifeMemories','PhilosophicalQuestions','PhilosophicalRevisions','CognitiveSuggestions','ConstructionProjects','FurnaceJobs','StorageJobs',
                       'CognitivePlans','NarrativeDrafts','Preferences','PreferenceUpdates','ReturnRoutes'):
             tables[table] = self.m.rows(f'SELECT * FROM {table} WHERE world=? ORDER BY rowid DESC LIMIT 60', (world,)) if world else []
         tables['construction']=self.construction.current(s) if s else None

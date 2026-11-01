@@ -1,5 +1,15 @@
 # Bridge local do MineLife AI 0.2
 
+## Extensões da revisão 2026-10-31
+
+- `storage` anuncia até oito posições de baús vanilla simples observados. `player.inventory` contém contagens consolidadas. As ações `storage_inspect`, `storage_deposit` e `storage_withdraw` recebem `storage: {job_id, baseline?, item_id?, source_slot?, destination_slot?}`. Snapshots incluem `slots` (27), `player_slots` (36), `inventory`, `station`, `dimension`, `sync_id`, `station_opened` e `cursor_empty`. Cada célula tem `id`, `count`, `components` e `standard`. Transferências usam `PICKUP` nativo para uma unidade. O baseline completo e o estado esperado são persistidos antes do envio. Uma nova abertura pode trocar `sync_id`; a prova antes/depois de uma transferência exige o mesmo handler. Reconciliação exige nova inspeção: estado esperado encerra a intenção sem atribuir transferência; baseline intacto permite nova intenção; outro estado bloqueia a estação. Cancelamento incerto mantém a GUI aberta para evitar descarte de cursor não confirmado.
+- `till` prepara farmland com enxada comum. Ferramentas encantadas ou inquebráveis não são elegíveis. `plant` exige umidade observada positiva e reserva de sementes; não confere irrigação futura nem crescimento. Colheita e drops permanecem provas distintas.
+- A fornalha pode usar calor residual apenas quando o estado observado satisfaz `BurnTime >= cook_ticks + 40`; reinspeciona antes da próxima unidade.
+- Rotas de retorno permitem até três segmentos sem novo avanço, afastamento de até seis blocos do melhor avanço e 64 segmentos totais, sempre a partir de fronteiras observadas. Isso não demonstra uma rota em chunks desconhecidos.
+- A resposta pode conter `interrupt: UUID` do comando em andamento quando há fome e alimento disponível. O cliente só cancela o comando correspondente após validar sessão, sequência e epoch, estando ativo e armado. O backend aguarda o resultado `cancelled` antes de emitir alimentação; F10 continua sendo parada de emergência independente.
+
+Esses contratos foram exercitados por testes automatizados e build, não por gameplay. O mod desta revisão não foi instalado nem executado no cliente.
+
 A bridge usa HTTP/1.1 JSON em `127.0.0.1:8765`; Uvicorn está fixado no parser h11 e com WebSocket desligado. O mod faz handshake autenticado `GET /bridge/handshake` e depois envia `POST /bridge/step`. O backend não é publicado para interfaces de rede.
 
 ## Sessão e segurança
@@ -48,7 +58,7 @@ Cada receita inclui `id`, `output_id`, `output_count`, `inputs` (item→quantida
 
 `cooking` anuncia até 16 combinações reais de receita, entrada, saída, `cook_ticks`, combustível e `fuel_ticks`; combustível ausente é `null` e não autoriza carga. `blocks[].lit` informa fornalha acesa observada. Comandos carregam `furnace: {job_id, recipe, recover}` e alvo; resultados contêm snapshots `before`/`after` com estação, dimensão, interface, inventário e três slots (`id`, `count`), além de `take_slot` na retirada. Cancelamento/falha invalida a inspeção em cache; reinício inspeciona novamente. Conteúdo conflitante é preservado.
 
-`farmland` anuncia até 12 posições de ar sobre solo agrícola, **somente `x/y/z`**, sem `support`. O executor deriva o apoio imediatamente abaixo. O comando contém `planting: {item_id, crop_id}` e alvo; prova inclui solo, idade zero, inventários e USED. `placement_spots` mantém seu formato diferente com `support` explícito.
+`farmland` anuncia até 12 posições de ar sobre solo agrícola, `x/y/z`, `moisture` (0–7) e `water` opcional, sem `support`. O executor deriva o apoio imediatamente abaixo. Observações legadas sem `moisture` continuam aceitas com valor -1; clientes novos aguardam hidratação e preservam uma semente. O comando contém `planting: {item_id, crop_id}` e alvo; prova inclui solo, idade zero, inventários e USED. `tilling` anuncia até 12 ofertas com solo, enxada e água observada; o comando `till` recebe a oferta em `tilling`. `placement_spots` mantém seu formato diferente com `support` explícito.
 
 Cada resultado é associado ao comando criado pelo backend, sessão, mundo e experimento. Campos vindos do cliente não bastam por si só: sucesso é revalidado contra estado/inventário/estatística no servidor integrado. O backend exige alvo e delta de inventário/estatística esperados antes de criar conhecimento confirmado. Remoção e coleta são eventos diferentes. Hipótese e reflexão filosófica guardam IDs das evidências. Uma intenção estruturada de LLM pode ajustar a prioridade de habilidades disponíveis; não emite ações, não anula segurança nem vira fato. Prosa livre permanece não verificada; composição factual do diário aceita somente referências/afirmações exatas autorizadas.
 

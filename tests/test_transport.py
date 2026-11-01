@@ -77,7 +77,16 @@ class TransportTest(unittest.TestCase):
     def test_java_planting_contract(self):
         self._java_contract('ResourcesBridgeContractTest','plant')
 
-    def _java_contract(self,class_name,*args):
+    def test_java_native_tilling_contract(self):
+        self._java_contract('LogisticsBridgeContractTest','till')
+
+    def test_java_native_storage_contract(self):
+        self._java_contract('LogisticsBridgeContractTest','storage_inspect')
+
+    def test_java_correlated_hunger_interruption_and_meal(self):
+        self._java_contract('LogisticsBridgeContractTest','interrupt',expected_requests=4)
+
+    def _java_contract(self,class_name,*args,expected_requests=2):
         root=Path(__file__).resolve().parents[1]
         classes=root/'mod/build/classes/java/test'
         if not shutil.which('java') or not (classes/f'ai/minelife/{class_name}.class').exists():
@@ -97,6 +106,6 @@ class TransportTest(unittest.TestCase):
                 while not server.started and time.monotonic()<deadline:time.sleep(.02)
                 run=subprocess.run(['java','-cp',str(classes),f'ai.minelife.{class_name}',f'http://127.0.0.1:{port}',*args],capture_output=True,text=True,timeout=15)
                 self.assertEqual(run.returncode,0,run.stderr)
-                self.assertEqual(versions,[('1.1',None),('1.1',None)])
+                self.assertEqual(versions,[('1.1',None)]*expected_requests)
             finally:
                 server.should_exit=True;thread.join(5);sock.close()

@@ -77,11 +77,11 @@ final class FurnaceController {
         if(entry==null||!(entry.value() instanceof SmeltingRecipe cooking)||!entry.id().getNamespace().equals("minecraft"))return "smelting_recipe_missing";
         var output=cooking.getResult(mc.world.getRegistryManager());
         var input=Registries.ITEM.get(Identifier.of(r.get("input_id").getAsString()));
-        String fuel=r.get("fuel_id").getAsString();
+        String fuel=r.get("fuel_id").isJsonNull()?null:r.get("fuel_id").getAsString();
         if(!allowedOutput(r.get("output_id").getAsString())||output.getCount()!=1
                 ||!Registries.ITEM.getId(output.getItem()).toString().equals(r.get("output_id").getAsString())
                 ||!cooking.getIngredients().get(0).test(new ItemStack(input))||cooking.getCookingTime()!=r.get("cook_ticks").getAsInt()
-                ||!allowedFuel(fuel)||AbstractFurnaceBlockEntity.createFuelTimeMap().getOrDefault(Registries.ITEM.get(Identifier.of(fuel)),0)<cooking.getCookingTime())return "invalid_smelting_plan";
+                ||fuel!=null&&(!allowedFuel(fuel)||AbstractFurnaceBlockEntity.createFuelTimeMap().getOrDefault(Registries.ITEM.get(Identifier.of(fuel)),0)<cooking.getCookingTime()))return "invalid_smelting_plan";
         action=requestedAction;station=p.toImmutable();job=request.deepCopy();recipe=r.deepCopy();owner=mc.player;phase=Phase.WALK;
         if(!nav.plan(station,false))return "no_safe_furnace_path";return null;
     }
@@ -110,9 +110,11 @@ final class FurnaceController {
         if(phase==Phase.BASELINE) {
             if(action.equals("furnace_inspect"))return evidence(a,a);
             if(action.equals("furnace_load")) {
-                if(!empty(a)||a.get("lit").getAsBoolean())return error("furnace_not_empty_and_cold");
+                boolean residual=recipe.get("fuel_id").isJsonNull();
+                if(!empty(a))return error("furnace_not_empty");
+                if(residual?(!a.get("lit").getAsBoolean()||a.get("burn_remaining").getAsInt()<recipe.get("cook_ticks").getAsInt()+40):a.get("lit").getAsBoolean())return error("furnace_heat_changed");
                 if(!hasSpace())return error("inventory_full");
-                for(String key:List.of("input_id","fuel_id"))if(InteractionSupport.count(a.getAsJsonObject("inventory"),recipe.get(key).getAsString())<1)return error("furnace_material_missing");
+                for(String key:List.of("input_id","fuel_id"))if(!recipe.get(key).isJsonNull()&&InteractionSupport.count(a.getAsJsonObject("inventory"),recipe.get(key).getAsString())<1)return error("furnace_material_missing");
                 String failure=moveOne(recipe.get("input_id").getAsString(),0);if(failure!=null)return error(failure);
                 phase=Phase.INPUT;phaseTicks=0;return null;
             }
@@ -129,6 +131,10 @@ final class FurnaceController {
         if(after==null)after=snapshot();if(!after.isDone())return null;if(after.isCompletedExceptionally())return error("furnace_result_unavailable");
         JsonObject b=after.join();if(!b.get("station_opened").getAsBoolean())return error("server_interface_changed");
         if(phase==Phase.INPUT) {
+            if(recipe.get("fuel_id").isJsonNull()) {
+                if(compatible(b)&&count(b,0)+count(b,2)==1&&delta(a,b,recipe.get("input_id").getAsString())==-1)return evidence(a,b);
+                after=null;return null;
+            }
             if(count(b,0)==1&&id(b,0).equals(recipe.get("input_id").getAsString())&&count(b,1)==0&&count(b,2)==0
                     &&delta(a,b,recipe.get("input_id").getAsString())==-1) {
                 String failure=moveOne(recipe.get("fuel_id").getAsString(),1);if(failure!=null)return error(failure);
@@ -158,7 +164,8 @@ final class FurnaceController {
         cursorSource=-1;return null;
     }
     private boolean slotMatches(JsonObject snapshot,int slot) {
-        return count(snapshot,slot)==1&&id(snapshot,slot).equals(slot==0?recipe.get("input_id").getAsString():slot==1?recipe.get("fuel_id").getAsString():recipe.get("output_id").getAsString());
+        return count(snapshot,slot)==1&&!(slot==1&&recipe.get("fuel_id").isJsonNull())
+                &&id(snapshot,slot).equals(slot==0?recipe.get("input_id").getAsString():slot==1?recipe.get("fuel_id").getAsString():recipe.get("output_id").getAsString());
     }
     private boolean compatible(JsonObject s){for(int i=0;i<3;i++)if(count(s,i)!=0&&!slotMatches(s,i))return false;return count(s,0)+count(s,2)<=1;}
     private static boolean empty(JsonObject s){return count(s,0)+count(s,1)+count(s,2)==0;}
@@ -176,6 +183,11 @@ final class FurnaceController {
             j.addProperty("station_opened",player.currentScreenHandler instanceof FurnaceScreenHandler&&player.currentScreenHandler.syncId==sync
                     &&player.currentScreenHandler.getSlot(0).inventory==furnace&&player.currentScreenHandler.canUse(player));
             j.addProperty("lit",world.getBlockState(p).get(AbstractFurnaceBlock.LIT));j.add("inventory",InteractionSupport.inventory(player.getInventory()));
+            // Read the real block entity through its public serialization API; no
+            // reflection, access widening, timer writes, or simulated tick progress.
+            var nbt=furnace.createNbt(world.getRegistryManager());
+            j.addProperty("burn_remaining",Math.max(0,(int)nbt.getShort("BurnTime")));
+            j.addProperty("cook_progress",Math.max(0,(int)nbt.getShort("CookTime")));
             var slots=new JsonArray();for(int i=0;i<3;i++){var stack=furnace.getStack(i);var cell=new JsonObject();cell.addProperty("id",Registries.ITEM.getId(stack.getItem()).toString());cell.addProperty("count",stack.getCount());slots.add(cell);}j.add("slots",slots);future.complete(j);
         }catch(Exception e){future.completeExceptionally(e);}});return future;
     }

@@ -1,4 +1,4 @@
-"""Persistent one-unit furnace jobs. A transfer, a cooked output and a meal are distinct facts."""
+"""Persistent unit jobs, including bounded continuations using server-observed residual heat."""
 import json
 import math
 import time
@@ -87,9 +87,18 @@ class CookingManager:
             if job['status']=='ready':action='furnace_take'
             elif job['status']=='recoverable':action='furnace_take'
             elif job['status']=='empty':
-                if snap['lit'] or s.time>=12000:return None
+                if s.time>=12000:return None
                 r=job['recipe']
-                if s.player.inventory.get(r['input_id'],0)<1 or s.player.inventory.get(r['fuel_id'],0)<1:
+                residual=r['fuel_id'] is None
+                if residual:
+                    if not snap['lit'] or snap.get('burn_remaining',0)<r['cook_ticks']+40:
+                        # This successor has not moved anything and inspection
+                        # confirms all slots empty. End it instead of keeping an
+                        # expired heat reservation as an active job forever.
+                        self.m.db.execute("UPDATE FurnaceJobs SET status='recovered',updated=? WHERE id=?",(now(),job['id']))
+                        self.reason='Calor restante insuficiente; preservar o ingrediente sem transferir.';return None
+                elif snap['lit']:return None
+                if s.player.inventory.get(r['input_id'],0)<1 or (not residual and s.player.inventory.get(r['fuel_id'],0)<1):
                     self.reason='Materiais reservados indisponíveis; aguardar sem repetir transferências.';return None
                 if r['fuel_id'] in PLANKS and sum(s.player.inventory.get(k,0) for k in PLANKS)<=self.construction.wood_demand(s):
                     self.reason='Madeira necessária ao abrigo; preservar a reserva em vez de usá-la como combustível.';return None
@@ -116,6 +125,8 @@ class CookingManager:
         for snapshot in (ev.get('before'),ev.get('after')):
             if not isinstance(snapshot,dict) or snapshot.get('station')!=job['station'] or snapshot.get('dimension')!=s.dimension or snapshot.get('station_opened') is not True:return False
             if type(snapshot.get('lit')) is not bool or not inventory(snapshot.get('inventory')):return False
+            for key in ('burn_remaining','cook_progress'):
+                if key in snapshot and (type(snapshot[key]) is not int or not 0<=snapshot[key]<=1000000):return False
             slots=snapshot.get('slots')
             if not isinstance(slots,list) or len(slots)!=3 or any(not isinstance(c,dict) or not isinstance(c.get('id'),str) or type(c.get('count')) is not int or not 0<=c['count']<=64 or (c['count']==0)!=(c['id']=='minecraft:air') for c in slots):return False
         a,b=ev['before'],ev['after'];r=job['recipe'];action=cmd['action']
@@ -124,8 +135,11 @@ class CookingManager:
         delta={k:b['inventory'].get(k,0)-a['inventory'].get(k,0) for k in a['inventory'].keys()|b['inventory'].keys()}
         delta={k:v for k,v in delta.items() if v}
         if action=='furnace_load':
-            return (not a['lit'] and not any(c['count'] for c in a['slots']) and b['slots'][0]['count']+b['slots'][2]['count']==1
-                    and delta=={r['input_id']:-1,r['fuel_id']:-1})
+            heat=(a['lit'] and a.get('burn_remaining',0)>=r['cook_ticks']+40) if r['fuel_id'] is None else not a['lit']
+            expected={r['input_id']:-1}
+            if r['fuel_id'] is not None:expected[r['fuel_id']]=-1
+            return (heat and not any(c['count'] for c in a['slots']) and b['slots'][0]['count']+b['slots'][2]['count']==1
+                    and delta==expected)
         slot=ev.get('take_slot');recover=request.get('recover',False)
         if type(slot) is not int or slot not in ((0,1) if recover else (2,)):return False
         return (a['slots'][slot]['count']==1 and b['slots'][slot]['count']==0
@@ -146,3 +160,12 @@ class CookingManager:
         self.m.db.execute('UPDATE FurnaceJobs SET status=?,load_event=?,last_event=?,last_session=?,inspection=?,revision=revision+1,updated=? WHERE id=?',
                           (status,load,event_id,str(s.session),json.dumps(snap),now(),job['id']))
         self.checked[job['id']]=self.clock()
+        # A batch is a bounded chain of ordinary unit jobs. Persist the next unit
+        # before returning; it always starts with a new inspection after restart.
+        if status=='completed' and snap.get('burn_remaining',0)>=job['recipe']['cook_ticks']+40 and snap['lit']:
+            r=job['recipe'];stock=snap['inventory'];limit=3 if r['output_id'] in FOOD_OUTPUTS else 4
+            if (s.time<12000 and stock.get(r['input_id'],0)>=1 and stock.get(r['output_id'],0)<limit
+                    and (s.player.food>8 or r['output_id'] in FOOD_OUTPUTS) and not any(c['count'] for c in slots)):
+                recipe=r|dict(fuel_id=None,fuel_ticks=0);stamp=now()
+                self.m.db.execute('INSERT INTO FurnaceJobs(id,world,dimension,station,recipe,status,created,updated) VALUES(?,?,?,?,?,?,?,?)',
+                                  (str(uuid4()),s.world,s.dimension,json.dumps(job['station'],sort_keys=True),json.dumps(recipe),'planned',stamp,stamp))

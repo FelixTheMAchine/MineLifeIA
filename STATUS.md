@@ -1,6 +1,19 @@
 # MineLife AI — status 0.2.0 — 2026-10-30
 
-## Estado corrente — recursos, preparo persistente e cognição contextual
+## Atualização corrente — 2026-10-31
+
+- Baús vanilla simples: capacidade observada de 27 slots mais inventário de 36 slots; operação nativa `PICKUP` limitada a uma unidade. A intenção é persistida antes do comando e reconciliada contra o estado esperado sem reivindicar autoria da alteração. Divergências e estados concorrentes bloqueiam repetição; o retry anterior não presume sucesso.
+- Reservas derivadas de recursos cobrem projetos persistentes de construção, fornalha, crafting e necessidades básicas. Isso não constitui um gerenciador genérico de reservas. Baú pode ser fabricado se a receita existir; sua colocação recusa vizinhança que formaria baú duplo.
+- Agricultura prepara solo com enxada comum, observa água e só oferece plantio quando a umidade observada é positiva; sementes ficam reservadas. Enxadas encantadas ou inquebráveis são excluídas. Colheita, drops e aumento de inventário continuam sendo fatos separados.
+- Fornalha encadeia unidades e pode usar calor residual somente após observar `BurnTime >= cook + 40`, reinspecionando a estação. Rotas admitem até três segmentos sem novo progresso, afastamento de até seis blocos do melhor avanço e 64 segmentos totais; isso não garante passagem por terreno não observado.
+- Interrupção por fome identifica o UUID do comando na resposta correlacionada por sessão, sequência e epoch; aguarda o resultado de cancelamento antes de iniciar alimentação. F10 e o estado armado são preservados.
+- O planejador solicita enxada por receita real quando necessária. Dois ciclos sintéticos completos verificaram preparo, plantio, maturidade observada, colheita, coleta de sementes com aumento de inventário e replantio; o crescimento real permanece pendente de gameplay.
+- Migração aditiva para SQLite v6 foi ensaiada com backup e dry-run em cópia da memória real: fingerprints das 28 tabelas históricas preservados; banco de origem não migrado.
+- Validação: 148 testes Python constituem apenas o baseline de 30/10; a contagem final desta revisão fica **no relatório de validação**, sem número definitivo aqui. Build Fabric passou contra as APIs da versão alvo. Mod não instalado e gameplay não executado. MCA permanece pendente. A cognição existente é preservada; grafo genérico de projetos e validação de vários dias não estão concluídos.
+
+Os detalhes históricos abaixo descrevem revisões anteriores e não substituem este estado corrente.
+
+## Histórico — recursos, preparo persistente e cognição contextual
 
 Continuação de `b860a0d`, com checkpoint local `safety/pre-mining-cooking-20261030`. Alterações locais preservadas. Nenhuma instalação de mod nem execução gráfica do Minecraft nesta sessão.
 

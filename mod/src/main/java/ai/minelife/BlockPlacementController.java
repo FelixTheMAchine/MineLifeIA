@@ -55,7 +55,9 @@ final class BlockPlacementController {
         cancel();
         item=request.get("item_id").getAsString();
         output=item;
-        if(!Set.of("minecraft:crafting_table","minecraft:furnace").contains(item))return "unsupported_place_item";
+        if(!Set.of("minecraft:crafting_table","minecraft:furnace","minecraft:chest").contains(item))return "unsupported_place_item";
+        if(item.equals("minecraft:chest"))for(Direction direction:Direction.Type.HORIZONTAL)
+            if(mc.world.getBlockState(p.offset(direction)).isOf(Blocks.CHEST))return "double_chest_not_supported";
         target=p.toImmutable();support=InteractionSupport.pos(request.getAsJsonObject("support"));
         if(!support.up().equals(target)||!clear(target))return "placement_obstructed_or_out_of_reach";
         if(mc.currentScreen!=null||mc.player.currentScreenHandler!=mc.player.playerScreenHandler)return "inventory_busy";
