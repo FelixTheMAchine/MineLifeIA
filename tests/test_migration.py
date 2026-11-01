@@ -8,6 +8,21 @@ from scripts.verify_memory_upgrade import fingerprint
 
 
 class MigrationTest(unittest.TestCase):
+    def test_v6_to_v7_preserves_storage_intent_and_all_historical_fingerprints(self):
+        with tempfile.TemporaryDirectory() as td:
+            path=Path(td)/'memory.sqlite3';m=MemoryManager(path)
+            m.db.execute("INSERT INTO StorageJobs(id,world,dimension,station,status,intent,created,updated) VALUES(?,?,?,?,?,?,?,?)",
+                         ('fixture','a'*64,'minecraft:overworld','{}','uncertain','{"command_id":"fixture"}','past','past'))
+            tables=('ProjectDecisions','ProjectGoalLinks','ProjectDependencies','LongProjects')
+            for table in tables:m.db.execute('DROP TABLE '+table)
+            m.db.execute('PRAGMA user_version=6');m.close();before=fingerprint(path)
+            m=MemoryManager(path)
+            for table in tables:self.assertEqual(m.rows('SELECT * FROM '+table),[])
+            self.assertEqual(m.rows('SELECT intent FROM StorageJobs')[0]['intent'],'{"command_id":"fixture"}')
+            m.close();self.assertEqual(before,fingerprint(path,before))
+            backups=list((path.parent/'backups').glob('*.sqlite3'))
+            self.assertEqual(len(backups),1);self.assertEqual(before,fingerprint(backups[0],before))
+
     def test_v5_to_v6_adds_storage_without_changing_historical_rows(self):
         with tempfile.TemporaryDirectory() as td:
             path=Path(td)/'memory.sqlite3';m=MemoryManager(path)

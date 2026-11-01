@@ -115,6 +115,10 @@ final class StorageController {
         after=null;return null;
     }
     private static boolean allowed(String id){
+        if(Set.of("minecraft:bread","minecraft:baked_potato","minecraft:carrot","minecraft:potato","minecraft:beetroot",
+                "minecraft:cooked_beef","minecraft:cooked_porkchop","minecraft:cooked_chicken","minecraft:cooked_mutton",
+                "minecraft:cooked_rabbit","minecraft:cooked_cod","minecraft:cooked_salmon",
+                "minecraft:wheat_seeds","minecraft:beetroot_seeds","minecraft:wheat").contains(id))return true;
         if(Set.of("minecraft:cobblestone","minecraft:stone","minecraft:dirt","minecraft:sand","minecraft:gravel","minecraft:glass",
                 "minecraft:coal","minecraft:charcoal","minecraft:raw_iron","minecraft:iron_ingot","minecraft:stick","minecraft:torch",
                 "minecraft:crafting_table","minecraft:furnace","minecraft:chest").contains(id))return true;

@@ -2,6 +2,10 @@
 
 ## Atualização corrente — 2026-10-31
 
+- Continuidade hierárquica: `LongProjects` adota projetos reais de abrigo e fornalha; dependências de recursos, execução e verificação vinculam objetivos permitidos. O foco concede bônus limitado depois das necessidades urgentes. Progresso nativo é preservado em suspensão/reinício; estagnação de 24 ciclos aplica cooldown, e abandono/retomada exigem motivo. Comandos ainda sem resultado impedem abandono. Não existe síntese arbitrária de projetos ou reservas genéricas por LLM.
+- Alimentos vanilla permitidos e sementes podem ter excedentes guardados, mantendo pisos conservadores no inventário (três unidades por alimento, seis raízes/trigo e oito sementes, além de demandas de projetos). Ferramentas e itens especiais continuam excluídos. O reabastecimento visa três alimentos no total; com fome, só permite inspeção e retirada alimentar próxima durante o dia. Comer ainda exige uma oferta real do componente alimentar e confirmação separada.
+- SQLite v7 adiciona quatro tabelas de continuidade sem reescrever histórico; dry-run sobre cópia da memória real preservou fingerprints das 28 tabelas anteriores. A origem permanece sem migração nesta sessão.
+- Novas verificações cobrem 160 ciclos variáveis com três reinícios e a cadeia crafting comprovado → memória recuperada → interpretação sintética → mudança de prioridade → comando permitido. Reflexão generativa externa e gameplay continuam pendentes. Roteiro isolado em `docs/VALIDATION.md`.
 - Baús vanilla simples: capacidade observada de 27 slots mais inventário de 36 slots; operação nativa `PICKUP` limitada a uma unidade. A intenção é persistida antes do comando e reconciliada contra o estado esperado sem reivindicar autoria da alteração. Divergências e estados concorrentes bloqueiam repetição; o retry anterior não presume sucesso.
 - Reservas derivadas de recursos cobrem projetos persistentes de construção, fornalha, crafting e necessidades básicas. Isso não constitui um gerenciador genérico de reservas. Baú pode ser fabricado se a receita existir; sua colocação recusa vizinhança que formaria baú duplo.
 - Agricultura prepara solo com enxada comum, observa água e só oferece plantio quando a umidade observada é positiva; sementes ficam reservadas. Enxadas encantadas ou inquebráveis são excluídas. Colheita, drops e aumento de inventário continuam sendo fatos separados.
@@ -9,7 +13,7 @@
 - Interrupção por fome identifica o UUID do comando na resposta correlacionada por sessão, sequência e epoch; aguarda o resultado de cancelamento antes de iniciar alimentação. F10 e o estado armado são preservados.
 - O planejador solicita enxada por receita real quando necessária. Dois ciclos sintéticos completos verificaram preparo, plantio, maturidade observada, colheita, coleta de sementes com aumento de inventário e replantio; o crescimento real permanece pendente de gameplay.
 - Migração aditiva para SQLite v6 foi ensaiada com backup e dry-run em cópia da memória real: fingerprints das 28 tabelas históricas preservados; banco de origem não migrado.
-- Validação: 148 testes Python constituem apenas o baseline de 30/10; a contagem final desta revisão fica **no relatório de validação**, sem número definitivo aqui. Build Fabric passou contra as APIs da versão alvo. Mod não instalado e gameplay não executado. MCA permanece pendente. A cognição existente é preservada; grafo genérico de projetos e validação de vários dias não estão concluídos.
+- Validação final: **220 testes Python aprovados, sem skips**, build Fabric aprovado e 535 assertions Java de políticas/geometria. Detalhes em `docs/VALIDATION_RESULTS.md`. Mod não instalado e gameplay não executado. MCA permanece pendente. A camada hierárquica acompanha abrigo/fornalha; planejamento universal e vida real por vários dias não estão concluídos.
 
 Os detalhes históricos abaixo descrevem revisões anteriores e não substituem este estado corrente.
 

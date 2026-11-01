@@ -18,6 +18,10 @@ MATERIALS = {'minecraft:'+name for name in ('cobblestone','stone','dirt','sand',
  'charcoal','raw_iron','iron_ingot','stick','torch','crafting_table','furnace','chest')} | PLANKS | DOORS
 MATERIALS |= {'minecraft:'+wood+suffix for wood in ('oak','spruce','birch','jungle','acacia','dark_oak',
  'mangrove','cherry','crimson','warped') for suffix in ('_log','_stem')}
+STORABLE_FOOD={'minecraft:'+name for name in ('bread','baked_potato','carrot','potato','beetroot',
+ 'cooked_beef','cooked_porkchop','cooked_chicken','cooked_mutton','cooked_rabbit','cooked_cod','cooked_salmon')}
+STORABLE_SEEDS={'minecraft:wheat_seeds','minecraft:beetroot_seeds'}
+MATERIALS |= STORABLE_FOOD | STORABLE_SEEDS | {'minecraft:wheat'}
 
 
 def content(snapshot):
@@ -100,9 +104,12 @@ class StorageManager:
         return row
 
     def reservations(self,s):
-        """Concrete additive reservations; protected foods/tools/seeds never enter MATERIALS."""
+        """Concrete additive reserves; essential tools never enter MATERIALS."""
         inv=s.player.inventory
         reserved={}
+        reserved.update({item:3 for item in STORABLE_FOOD})
+        reserved.update({item:8 for item in STORABLE_SEEDS})
+        reserved.update({'minecraft:carrot':6,'minecraft:potato':6,'minecraft:wheat':6})
         wood=12+(self.construction.wood_demand(s) if self.construction else 0)
         for item in sorted(PLANKS):
             n=min(inv.get(item,0),wood)
@@ -128,6 +135,12 @@ class StorageManager:
     def demands(self,s):
         inv=s.player.inventory
         needs={}
+        food=sum(inv.get(item,0) for item in STORABLE_FOOD)
+        if food<3:
+            for item in STORABLE_FOOD:needs[item]=inv.get(item,0)+3-food
+        if 'plant' in s.capabilities and getattr(s,'farmland',[]):
+            for item in STORABLE_SEEDS:
+                if inv.get(item,0)<2:needs[item]=2
         if self.construction:
             wood=self.construction.wood_demand(s)-sum(inv.get(k,0) for k in PLANKS)
             if wood>0:
@@ -161,7 +174,7 @@ class StorageManager:
                     reason='Inventario e todos os slots do bau sao revalidados no servidor.',priority=245 if action=='storage_withdraw' else 225,
                     kind=action,skill=action,params=dict(target={**job['station'],'id':'minecraft:chest'},storage=request))
 
-    def propose(self,s):
+    def propose(self,s,food_only=False):
         if not ACTIONS<=set(s.capabilities) or s.player.danger:return None
         job=self.current(s)
         if job is None:
@@ -174,7 +187,7 @@ class StorageManager:
                 job=self.current(s);break
             if job is None:
                 reserved=self.reservations(s)
-                if ('place' in s.capabilities and s.player.inventory.get('minecraft:chest',0)>0
+                if (not food_only and 'place' in s.capabilities and s.player.inventory.get('minecraft:chest',0)>0
                         and any(n>reserved.get(item,0) for item,n in s.player.inventory.items() if item in MATERIALS)):
                     project=self.construction.current(s) if self.construction else None
                     for spot in getattr(s,'placement_spots',[]):
@@ -187,7 +200,7 @@ class StorageManager:
                                     placement=dict(item_id='minecraft:chest',support=spot.support.model_dump())))
                 return None
         if math.dist(tuple(job['station'][k] for k in ('x','y','z')),(s.player.x,s.player.y,s.player.z))>12:return None
-        if self.clock()<self.idle_until.get(job['id'],-1e30):return None
+        if not food_only and self.clock()<self.idle_until.get(job['id'],-1e30):return None
         failures=self.m.rows('SELECT COALESCE(sum(attempts),0) n FROM GoalPlans WHERE world=? AND subject LIKE ?',
                              (s.world,f"storage:{job['id']}:%"))[0]['n']
         if failures>=3 or job['revision']>=256:
@@ -203,9 +216,13 @@ class StorageManager:
             return self._proposal(s,job,'storage_inspect',request)
         reserved,needs=self.reservations(s),self.demands(s)
         for action,source_range,dest_range in (('storage_withdraw',range(27),range(27,63)),('storage_deposit',range(27,63),range(27))):
+            if food_only and action!='storage_withdraw':continue
+            if action=='storage_withdraw' and getattr(s.player,'food',20)<=8:
+                source_range=sorted(source_range,key=lambda index:cell(snap,index)['id'] not in STORABLE_FOOD)
             for source in source_range:
                 c=cell(snap,source);item=c['id']
                 if item not in MATERIALS or not c['standard']:continue
+                if food_only and item not in STORABLE_FOOD:continue
                 if action=='storage_deposit' and s.player.inventory.get(item,0)<=reserved.get(item,0):continue
                 if action=='storage_withdraw' and s.player.inventory.get(item,0)>=needs.get(item,0):continue
                 for dest in dest_range:

@@ -10,6 +10,10 @@
 
 Esses contratos foram exercitados por testes automatizados e build, não por gameplay. O mod desta revisão não foi instalado nem executado no cliente.
 
+A lista transferível inclui recursos vanilla, alimentos seguros permitidos, trigo e sementes de trigo/beterraba, sempre com componentes padrão. O planejador preserva três unidades por tipo de alimento, seis cenouras/batatas/trigo e oito sementes, somando demandas de projetos. Retirada de comida considera uma meta absoluta de três alimentos no total. Sob fome, o modo de armazenamento só inspeciona ou retira alimentos; não deposita nem busca material de construção. Ferramentas e alimentos inseguros continuam fora da lista. Transferir alimento não confirma ingestão.
+
+Projetos de abrigo/fornalha são acompanhados em `LongProjects`, `ProjectDependencies`, `ProjectGoalLinks` e `ProjectDecisions` (SQLite v7). Essa camada não cria comandos: acrescenta foco limitado a objetivos já permitidos e registra condições, estagnação, suspensão e retomada. Conclusão depende de evidência do executor; inspeções de abrigo novas também incluem `dimension`. Não há inferência de execução a partir de texto LLM.
+
 A bridge usa HTTP/1.1 JSON em `127.0.0.1:8765`; Uvicorn está fixado no parser h11 e com WebSocket desligado. O mod faz handshake autenticado `GET /bridge/handshake` e depois envia `POST /bridge/step`. O backend não é publicado para interfaces de rede.
 
 ## Sessão e segurança

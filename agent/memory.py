@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 def now():
@@ -149,6 +149,8 @@ class MemoryManager:
           CREATE INDEX IF NOT EXISTS goals_world_status ON Goals(world,status);
         ''')
         # Additive migration: existing knowledge, events and immutable journals remain intact.
+        from agent.projects import SCHEMA as PROJECT_SCHEMA
+        self.db.executescript(PROJECT_SCHEMA)
         self.db.execute(f'PRAGMA user_version={SCHEMA_VERSION}')
         self.db.commit()
 

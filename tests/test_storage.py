@@ -129,8 +129,8 @@ class StorageTest(unittest.TestCase):
         self.assertEqual(self.reconcile('other'),'conflict')
         self.assertIsNone(self.manager.propose(self.s))
 
-    def test_food_tools_seeds_and_nonstandard_items_never_transfer(self):
-        for item in ('minecraft:bread','minecraft:wheat_seeds','minecraft:iron_pickaxe','minecraft:diamond'):
+    def test_essential_tools_and_nonstandard_items_never_transfer(self):
+        for item in ('minecraft:iron_pickaxe','minecraft:diamond','minecraft:poisonous_potato'):
             self.assertNotIn(item,MATERIALS)
         a=snapshot({0:(ITEM,3,False)})
         self.inspected(a)
@@ -163,15 +163,17 @@ class StorageTest(unittest.TestCase):
         self.assertEqual(cmd['action'],'storage_withdraw')
         self.assertEqual(cmd['storage']['item_id'],'minecraft:coal')
 
-    def test_planned_furnace_demands_add_and_ignore_food_and_terminal_jobs(self):
+    def test_planned_furnace_demands_add_and_ignore_unsafe_food_and_terminal_jobs(self):
         for jid,status,item in (('a','planned','minecraft:raw_iron'),('b','empty','minecraft:raw_iron'),
-                                ('c','completed','minecraft:raw_iron'),('d','planned','minecraft:potato')):
+                                ('c','completed','minecraft:raw_iron'),('d','planned','minecraft:potato'),
+                                ('e','planned','minecraft:chicken')):
             recipe=json.dumps(dict(input_id=item,fuel_id=None))
             self.m.db.execute('INSERT INTO FurnaceJobs(id,world,dimension,station,recipe,status,created,updated) VALUES(?,?,?,?,?,?,?,?)',
                               (jid,self.s.world,DIM,'{}',recipe,status,'now','now'))
         needs=self.manager.demands(self.s)
         self.assertEqual(needs['minecraft:raw_iron'],2)
-        self.assertNotIn('minecraft:potato',needs)
+        self.assertEqual(needs['minecraft:potato'],4)
+        self.assertNotIn('minecraft:chicken',needs)
 
     def test_place_chest_for_excess_outside_shelter_anchor(self):
         self.s.storage=[];self.s.capabilities.append('place')

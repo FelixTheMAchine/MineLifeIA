@@ -21,6 +21,7 @@ from agent.identity import IdentityEngine
 from agent.routes import RouteManager
 from agent.agriculture import AgriculturePlanner
 from agent.storage import StorageManager, MATERIALS as STORAGE_MATERIALS
+from agent.projects import ProjectManager
 
 
 def valid_inventory(value):
@@ -48,6 +49,7 @@ class CognitiveEngine:
         self.routes=RouteManager(memory)
         self.agriculture=AgriculturePlanner(memory)
         self.storage=StorageManager(memory,self.construction,self.crafting,clock)
+        self.projects=ProjectManager(memory)
         self.philosophy = PhilosophicalReflectionEngine(memory, self.autobiography)
         self.sessions, self.last_plan, self.command_sent = {}, {}, {}
         self.latest, self.last_seen, self.control = None, 0.0, None
@@ -435,6 +437,7 @@ class CognitiveEngine:
                 self._state(s,'SURVIVAL','Interromper trabalho atual para usar alimento disponível; preservar o progresso.')
             else:response['command'] = self.decide(s, changed or previous is None)
         if not s.active or not s.armed or unsafe or response['control'] in ('stop', 'pause'):
+            self.projects.suspend(s,'Controle pausado ou condicao fisiologica insegura; preservar progresso.')
             self.m.db.execute("UPDATE Goals SET status='suspended' WHERE world=? AND status='running'", (s.world,))
         response.update(state=self.state, reason=self.reason)
         self.m.db.commit()
@@ -491,10 +494,17 @@ class CognitiveEngine:
         offered=set()
         # Food, its observed sources and executable preparation are considered before curiosity.
         if s.player.food <= self.motivation.safety_limits(s.world)[1]:
+            self.projects.suspend(s,'Prioridade alimentar observada; retomar o projeto depois de recuperar as reservas.')
             foods = [f.model_dump() for f in s.player.foods if self._safe_food(f.model_dump(), s.player.inventory)]
             if 'eat' in s.capabilities:
                 for food in sorted(foods,key=lambda f:(f['nutrition'],f['count'],f['id']),reverse=True):
                     command=self._start_eat(s,food)
+                    if command:return command
+            if s.time<12000 and 'eat' in s.capabilities:
+                stored_food=self.storage.propose(s,food_only=True)
+                if stored_food:
+                    stored_food['category']='IMMEDIATE'
+                    command=self._offer_project(s,stored_food)
                     if command:return command
             project=self.construction.current(s)
             if project:
@@ -578,6 +588,7 @@ class CognitiveEngine:
                 command=self._start_pickup(s,item,200,'Formar reserva pequena com alimento ou trigo observado.','SHORT_TERM')
                 if command:return command
         self.construction.prepare(s)
+        self.projects.sync(s)
         storage=self.storage.propose(s)
         if storage:
             command=self._offer_project(s,storage)
@@ -599,11 +610,13 @@ class CognitiveEngine:
             if command:return command
         need_wood=self.crafting.needs_wood(s)
         candidates = [b for b in s.blocks if not b.bed and (b.harvestable or b.log and need_wood or (b.id if b.log else 'observation:'+b.id) not in known)]
-        proposal=self.construction.propose(s)
+        native_project=self.construction.current(s)
+        proposal=(self.construction.propose(s) if not native_project or self.projects.allows(s,'shelter',native_project['id']) else None)
         if proposal:
             command=self._offer_project(s,proposal)
             if command:return command
-        cooking=self.cooking.propose(s)
+        native_job=self.cooking.current(s)
+        cooking=(self.cooking.propose(s) if not native_job or self.projects.allows(s,'furnace',native_job['id']) else None)
         if cooking:
             command=self._offer_project(s,cooking)
             if command:return command
@@ -651,7 +664,8 @@ class CognitiveEngine:
                 offered.add(gid)
         goals = self.goals.rows(s.world)
         goals.sort(key=lambda g:g['priority']+self.language.bonus(s.world,g['kind'],json.loads(g['params']),g['subject'])
-                   +self.identity.bonus(s.world,g['kind'],json.loads(g['params'])),reverse=True)
+                   +self.identity.bonus(s.world,g['kind'],json.loads(g['params']))
+                   +self.projects.bonus(s,g['kind'],json.loads(g['params'])),reverse=True)
         for goal in goals:
             if goal['id'] not in offered or goal['status'] != 'pending' or goal['cooldown'] > time.time(): continue
             if not self.skills.available(goal['skill'], s.capabilities):
@@ -681,7 +695,8 @@ class CognitiveEngine:
 
     def _work_goals(self,s,personality):
         offered=set()
-        for proposal in sorted(self.crafting.proposals(s,personality)+self.mining.proposals(s,personality)+self.agriculture.proposals(s,personality),key=lambda p:p['priority'],reverse=True):
+        for proposal in sorted(self.crafting.proposals(s,personality)+self.mining.proposals(s,personality)+self.agriculture.proposals(s,personality),
+                               key=lambda p:p['priority']+self.projects.bonus(s,p['kind'],p['params']),reverse=True):
             gid=self.goals.ensure(s,**proposal)
             if gid:
                 self.goals.question(s,proposal['subject'],proposal['description']+' com verificação do resultado?')
@@ -690,6 +705,7 @@ class CognitiveEngine:
 
     def _start_planned(self,s,goal):
         params=json.loads(goal['params'])
+        self.projects.link(s,goal['id'],goal['kind'],params)
         hypothesis=str(uuid4())
         self.m.db.execute("INSERT OR IGNORE INTO Hypotheses VALUES(?,?,?,?,'hypothesis','[]')",
                           (hypothesis,s.world,goal['description'],'O experimento pode produzir evidência para este objetivo.'))
@@ -804,7 +820,7 @@ class CognitiveEngine:
         for table in ('Knowledge','Hypotheses','Experiments','Goals','JournalEntries','PublicationQueue','Questions',
                       'Interests','Motivations','SpatialRegions','Reflections','SkillProgress','PersonalityChanges',
                       'LifeMemories','PhilosophicalQuestions','PhilosophicalRevisions','CognitiveSuggestions','ConstructionProjects','FurnaceJobs','StorageJobs',
-                      'CognitivePlans','NarrativeDrafts','Preferences','PreferenceUpdates','ReturnRoutes'):
+                      'CognitivePlans','NarrativeDrafts','Preferences','PreferenceUpdates','ReturnRoutes','LongProjects'):
             tables[table] = self.m.rows(f'SELECT * FROM {table} WHERE world=? ORDER BY rowid DESC LIMIT 60', (world,)) if world else []
         tables['construction']=self.construction.current(s) if s else None
         tables['cooking']=dict(job=self.cooking.current(s),reason=self.cooking.reason) if s else None

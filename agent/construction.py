@@ -42,6 +42,9 @@ class ConstructionPlanner:
         project=self.current(s)
         if project or not CAPABILITIES<=set(s.capabilities) or s.time>=11000 or s.dimension!='minecraft:overworld':return project
         sites=sorted(s.shelter_sites,key=lambda p:math.dist((p.x+.5,p.y,p.z+.5),(s.player.x,s.player.y,s.player.z)))
+        sites=[p for p in sites if not self.m.rows("SELECT 1 FROM ConstructionProjects WHERE world=? AND dimension=? AND status='abandoned' "
+               "AND json_extract(anchor,'$.x')=? AND json_extract(anchor,'$.y')=? AND json_extract(anchor,'$.z')=?",
+               (s.world,s.dimension,p.x,p.y,p.z))]
         if not sites:return None
         anchor=sites[0].model_dump();pid=str(uuid4());stamp=now()
         self.m.db.execute('INSERT INTO ConstructionProjects VALUES(?,?,?,?,?,?,?,?,?,?,?)',

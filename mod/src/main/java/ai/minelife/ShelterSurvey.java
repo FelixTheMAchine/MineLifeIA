@@ -37,9 +37,11 @@ final class ShelterSurvey {
     }
     static boolean near(PlayerEntity player,BlockPos pos){return player.getPos().squaredDistanceTo(Vec3d.ofBottomCenter(pos))<.36;}
     static JsonObject inspect(World world,PlayerEntity player,BlockPos anchor) {
+        // The inspection is also used by persistent cross-session project proofs.
         for(var p:BlockPos.iterate(anchor.add(-2,-1,-2),anchor.add(2,3,3)))
             if(!world.isChunkLoaded(p))throw new IllegalStateException("shelter_chunk_unloaded");
         var ev=new JsonObject();var cells=new JsonArray();boolean complete=true;
+        ev.addProperty("dimension",world.getRegistryKey().getValue().toString());
         for(int i=0;i<ShelterBlueprint.CELLS.size();i++) {
             var cell=ShelterBlueprint.CELLS.get(i);var p=cell.target(anchor);
             String id=Registries.BLOCK.getId(world.getBlockState(p).getBlock()).toString();

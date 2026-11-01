@@ -6,6 +6,9 @@ O status diferencia implementação, validação automatizada e observação no 
 
 ### Atualização 2026-10-31
 
+- Continuidade de abrigo/fornalha: projetos persistentes com dependências, vínculo a objetivos executáveis, foco limitado, histórico de decisões, suspensão, retomada, estagnação e abandono justificado. Isso amplia executores existentes; não constitui um planejador universal de novas habilidades.
+- Excedentes alimentares/sementes entram na logística de baús com reservas pessoais; escassez permite revalidar e retirar alimento, sem atribuir refeição à transferência.
+- SQLite v7 com migração aditiva e fingerprints reais preservados; integração de 160 ciclos e cadeia cognitiva com interpretação sintética. Gameplay isolado segue pendente conforme `docs/VALIDATION.md`.
 - Logística de baú vanilla simples (27 slots) e inventário (36 slots), com `PICKUP` de uma unidade, intenção persistida antes do comando e reconciliação sem autoria. Reservas são derivadas de construção, fornalha, crafting e necessidades básicas; não existe gerenciador genérico de reservas.
 - Preparo de solo com enxada comum, plantio somente com umidade observada positiva e reserva de semente. Provas de colheita, drops e coleta seguem separadas.
 - Fornalha encadeia unidades com inspeção de calor residual (`BurnTime >= cook + 40`). Rotas incluem até três segmentos sem novo avanço, afastamento de seis blocos do melhor avanço e 64 segmentos totais.
