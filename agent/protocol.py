@@ -59,6 +59,16 @@ class ItemObservation(StrictModel):
     edible: bool
 
 
+class SocialObservation(StrictModel):
+    person_uuid: UUID
+    entity_type: Literal['minecraft:villager','mca:male_villager','mca:female_villager']
+    name: str = Field(min_length=1,max_length=96,pattern=r'^[^\x00-\x1f\x7f]+$')
+    x: float
+    y: float
+    z: float
+    can_contact: bool = False
+
+
 class Result(StrictModel):
     id: UUID
     status: Literal['success', 'failed', 'cancelled']
@@ -194,3 +204,4 @@ class Step(StrictModel):
     farmland: list[FarmlandObservation] = Field(default_factory=list, max_length=12)
     tilling: list[TillingOffer] = Field(default_factory=list, max_length=12)
     storage: list[Pos] = Field(default_factory=list, max_length=8)
+    social: list[SocialObservation] = Field(default_factory=list, max_length=8)

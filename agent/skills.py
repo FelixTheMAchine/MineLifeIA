@@ -14,6 +14,10 @@ class Skill:
 class SkillRegistry:
     """Só habilidades com executor físico real; capacidades são negociadas com o mod."""
     skills = {
+        'observe_person': Skill('observe_person',('social_observe',),'NPC UUID observado, dia seguro e reservas fisiológicas',
+                                 'identidade, nome, tipo, dimensão e proximidade confirmados pelo servidor'),
+        'contact_person': Skill('contact_person',('social_contact',),'MCA compatível, encontro confirmado, mãos vazias e nenhuma GUI anterior',
+                                 'interface MCA vinculada ao NPC e estado de interação do servidor; não confirma conversa ou afinidade'),
         'storage_inspect': Skill('storage_inspect',('storage_inspect',),'baú simples observado e interface acessível',
                                  'slots do baú e inventário principal inspecionados no servidor'),
         'storage_deposit': Skill('storage_deposit',('storage_deposit',),'baseline persistido, excedente livre e espaço compatível',

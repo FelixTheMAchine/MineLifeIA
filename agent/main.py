@@ -13,7 +13,7 @@ from agent.protocol import Step
 from agent.llm import LanguageAdvisor
 from agent.skills import SkillRegistry
 
-BRIDGE_FEATURES = ['workstations-v1','shelters-v1','mining-cooking-v1','agriculture-v1','storage-v1']
+BRIDGE_FEATURES = ['workstations-v1','shelters-v1','mining-cooking-v1','agriculture-v1','storage-v1','social-v1']
 BRIDGE_ACTIONS = sorted({action for skill in SkillRegistry.skills.values() for action in skill.actions})
 
 
@@ -21,18 +21,44 @@ def create_app(root=ROOT, config=None):
     config = config or load_config(root)
     memory = MemoryManager(root / 'data' / 'memory.sqlite3')
     journal = JournalWriter(memory, root / 'journals')
-    engine = CognitiveEngine(memory, journal, config.get('planning'))
+    engine = CognitiveEngine(memory, journal, config.get('planning'),mind_config=config.get('llm'))
     lock = asyncio.Lock()
     advisor = LanguageAdvisor(config.get('llm'))
+    advisor.bind_scope(None,allowed=False)
+    engine.mind.set_epoch(advisor.generation,advisor.runtime_id)
+    next_mind_context=0.0
+
+    def bind_mind(payload=None,allowed=False):
+        previous_generation=advisor.generation
+        scope={key:getattr(payload,key) for key in ('world','dimension','session','control_epoch')} if payload else None
+        if scope:scope['session']=str(scope['session'])
+        advisor.bind_scope(scope,allowed=allowed)
+        if previous_generation!=advisor.generation:engine.mind_context.last_context=None
+        engine.mind.set_epoch(advisor.generation,advisor.runtime_id)
+
+    async def mind_watchdog():
+        while True:
+            await asyncio.sleep(.5)
+            async with lock:
+                if engine.latest is None or engine.clock()-engine.last_seen>=3:
+                    bind_mind()
 
     @asynccontextmanager
     async def lifespan(app):
-        yield
-        await advisor.close()
-        memory.close()
+        watchdog=asyncio.create_task(mind_watchdog())
+        health_probe=asyncio.create_task(advisor.health_check()) if config.get('llm',{}).get('provider')=='ollama' else None
+        try:
+            yield
+        finally:
+            watchdog.cancel()
+            if health_probe:health_probe.cancel()
+            await asyncio.gather(watchdog,*([health_probe] if health_probe else []),return_exceptions=True)
+            await advisor.close()
+            memory.close()
 
     app = FastAPI(title='MineLife AI', lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.engine = engine
+    app.state.advisor = advisor
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=['127.0.0.1', 'localhost', 'testserver'])
 
     @app.middleware('http')
@@ -81,21 +107,37 @@ def create_app(root=ROOT, config=None):
             if action in ('start', 'resume') and not engine.latest.armed:
                 raise HTTPException(409, 'Autorize localmente com F8 no jogo')
             engine.control = action
+            if action in ('pause','stop'):bind_mind(engine.latest,allowed=False)
             return {'queued': action}
 
     @app.post('/bridge/step')
     async def step(payload: Step):
+        nonlocal next_mind_context
         async with lock:
             try:
                 response = engine.step(payload)
+                health_limit,food_limit=engine.motivation.safety_limits(payload.world)
+                allowed=(payload.active and payload.armed and not payload.player.danger
+                         and payload.player.health>health_limit and payload.player.food>food_limit
+                         and payload.control_state not in ('EMERGENCY_STOP','PAUSED','DISABLED','DISCONNECTED')
+                         and response['control'] not in ('pause','stop')
+                         and response['state'] not in ('EMERGENCY_STOP','PAUSED'))
+                bind_mind(payload,allowed=allowed)
                 suggestion=advisor.take_result()
                 if suggestion:
                     engine.record_advice(suggestion)
                     memory.db.commit()
-                if payload.active and payload.armed and not payload.player.danger and advisor.due():
-                    context=engine.language.context(payload,engine.goals.rows(payload.world),engine.motivation.values(payload.world),
-                        memory.rows('SELECT topic,intensity FROM Interests WHERE world=? ORDER BY intensity DESC LIMIT 8',(payload.world,)))
-                    advisor.schedule(context,'auto')
+                if allowed and advisor.due() and engine.clock()>=next_mind_context:
+                    next_mind_context=engine.clock()+5
+                    try:
+                        context=engine.mind_context.build(payload,engine.goals.rows(payload.world),engine.motivation.values(payload.world),
+                            memory.rows('SELECT topic,intensity FROM Interests WHERE world=? ORDER BY intensity DESC LIMIT 8',(payload.world,)),
+                            generation=advisor.generation)
+                        if context.get('source_event_ids'):advisor.schedule(context,'integrated')
+                        engine.mind_context.last_error=None
+                    except (ValueError,TypeError,OverflowError):
+                        engine.mind_context.last_error='invalid_context_configuration'
+                        bind_mind(payload,allowed=False)
                 return response
             except ValueError as exc:
                 memory.db.rollback()

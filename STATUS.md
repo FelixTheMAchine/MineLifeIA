@@ -1,5 +1,24 @@
 # MineLife AI — status 0.2.0 — 2026-10-30
 
+## MineLife Mind v1 — 2026-11-01
+
+Base: `12bb1b1`, incluindo alterações locais anteriores de capítulos autobiográficos, identidade e integração social MCA. Baseline: 265 testes Python e build Fabric aprovados. Essas alterações foram preservadas e usadas pela integração.
+
+- Provedor Ollama nativo (`/api/chat`, JSON Schema, métricas e `think` explícito), modelo de referência `qwen3:1.7b`, CPU por padrão, timeout total e respostas limitadas. Inferência continua opcional; nenhum modelo ou framework foi instalado.
+- Scheduler assíncrono com uma chamada ativa, fila limitada, deduplicação, cooldowns, limites de frequência e recursos. Pausa, emergência, desconexão e mudança de mundo/sessão/epoch invalidam saídas antigas. Uma chamada obsoleta drena sem abrir outra vaga; timeout não provoca repetição imediata. Heartbeat e controles não aguardam o modelo.
+- Contexto limitado reutiliza memória lexical/contextual, personalidade, preferências, projetos e interpretações anteriores. Projeções derivadas têm cache limitado e fingerprints revalidados. O orçamento de tokens é estimado por bytes, sem novo tokenizer ou embeddings.
+- Seis categorias tipadas, referências verificadas e intenções ligadas a objetivos e habilidades existentes. O bônus é limitado e revalidado antes da seleção. `MindEvaluations` relaciona proposta, objetivo, experimento, comando e resultado; falha/cancelamento não refutam automaticamente uma narrativa. O aprendizado determinístico de identidade permanece baseado em experiências.
+- Observer ampliado com estado e métricas do provedor, contexto, memórias, pensamentos, hipóteses, intenções, rejeições, influência, ações pendentes e resultados verificados. Procedimentos em [docs/MINELIFE_MIND.md](docs/MINELIFE_MIND.md).
+- SQLite v9 adiciona tabelas e índices do Mind com backup. Ensaio em cópia da memória real preservou fingerprints das 28 tabelas históricas e confirmou integridade; origem permaneceu na versão 3, sem migração. A comparação com o início da sessão também confirmou preservação.
+
+Validação final: **319 testes Python aprovados, zero falhas**, build Fabric aprovado (535 assertions Java de políticas/geometria), `node --check` do Observer e `pip check` aprovados. A primeira suíte ampliada encontrou uma falha na recuperação sem metas ativas; o contexto passou a usar também acontecimentos recentes e a suíte completa foi repetida com sucesso. O teste integrado usa provider HTTP simulado, parser real e planejador real: uma proposta válida muda a seleção de `approach` para `explore`; o resultado só aparece após confirmação correlacionada da fixture. Isso não é gameplay nem inferência de um modelo real.
+
+Ollama não foi encontrado no PATH nem nos caminhos usuais e a API loopback não respondeu; nenhum modelo foi efetivamente usado. O benchmark recusou inferência porque a inspeção de processos ficou indeterminada no ambiente restrito. Não há latência de modelo, throughput, consumo durante inferência nem FPS medidos. Não houve instalação do JAR, gameplay, edição de save ou publicação de diário. Configuração privada continua `provider=none`.
+
+Pendências: instalar explicitamente Ollama/Qwen e medir saída real; avaliar thinking desligado/ligado; validar o ciclo no jogo com backup e `Install-Mod.ps1`. A seleção automática de reflexão profunda nesta revisão usa marcos de abrigo/preparo retidos; detecção semântica geral de contradições e comparação de projetos complexos ainda precisam de expansão. O sistema não demonstra consciência nem garante FPS.
+
+Roteamento efetivo: Astra/MAX no desenho de invariantes, Sol/MEDIUM em provider/scheduler/núcleo/ferramentas, Luna/LOW na documentação. Subagentes atingiram limite na revisão final; correções e validação continuaram no coordenador disponível, sem afirmar troca de modelo.
+
 ## Atualização corrente — 2026-10-31
 
 - Continuidade hierárquica: `LongProjects` adota projetos reais de abrigo e fornalha; dependências de recursos, execução e verificação vinculam objetivos permitidos. O foco concede bônus limitado depois das necessidades urgentes. Progresso nativo é preservado em suspensão/reinício; estagnação de 24 ciclos aplica cooldown, e abandono/retomada exigem motivo. Comandos ainda sem resultado impedem abandono. Não existe síntese arbitrária de projetos ou reservas genéricas por LLM.

@@ -4,6 +4,11 @@ import math
 from agent.memory import now
 from agent.cognition import EVENT_DOMAINS, CognitiveLanguageEngine
 
+ACTIVITIES={'region_reached':'exploration','observed':'observation','crafted':'crafting',
+            'resource_mined':'mining','planted':'agriculture','soil_tilled':'agriculture',
+            'crop_harvested':'agriculture','shelter_completed':'construction',
+            'social_contact':'social_contact','person_observed':'social_observation'}
+
 class IdentityEngine:
     def __init__(self,memory):self.m=memory
 
@@ -11,7 +16,8 @@ class IdentityEngine:
         rows=self.m.rows('SELECT * FROM Events WHERE id=? AND world=? AND verified=1',(eid,s.world))
         if not rows:return
         event=rows[0];kind=event['type'];evidence=json.loads(event['evidence'])
-        changes=[('value',domain,1.) for domain in EVENT_DOMAINS.get(kind,()) if domain in ('safety','knowledge','creation','place','exploration','survival','engineering')]
+        changes=[('value',domain,1.) for domain in EVENT_DOMAINS.get(kind,()) if domain in ('safety','knowledge','creation','place','exploration','survival','engineering','social')]
+        if kind in ACTIVITIES:changes.append(('activity',ACTIVITIES[kind],1.))
         if kind=='region_reached':changes.append(('biome',s.biome,1.))
         if kind=='resource_mined':changes.append(('material',evidence.get('before_block','unknown'),1.))
         if kind=='attempt_failed':
@@ -31,7 +37,11 @@ class IdentityEngine:
 
     def bonus(self,world,kind,params):
         intent=CognitiveLanguageEngine.intent_for(kind,params)
-        value={'explore_regions':'exploration','study_material':'knowledge','make_tools':'engineering','build_refuge':'creation','prepare_food':'survival','smelt_resources':'engineering'}[intent]
-        rows=self.m.rows('SELECT category,subject,weight FROM Preferences WHERE world=? AND (category=? OR subject=?)',
-                         (world,'value',params.get('target',{}).get('id','')))
-        return max(-12,min(12,sum(r['weight']*10 for r in rows if r['subject']==value or r['category']=='material')))
+        value={'explore_regions':'exploration','study_material':'knowledge','make_tools':'engineering','build_refuge':'creation','prepare_food':'survival','smelt_resources':'engineering','meet_people':'social'}[intent]
+        activity={'explore':'exploration','observe':'observation','mine':'mining','craft':'crafting','craft_table':'crafting',
+                  'plant':'agriculture','till':'agriculture','harvest':'agriculture','build_shelter':'construction',
+                  'social_contact':'social_contact','social_observe':'social_observation'}.get(kind)
+        rows=self.m.rows('SELECT category,subject,weight FROM Preferences WHERE world=? AND (category=? OR subject=? OR (category=? AND subject=?))',
+                         (world,'value',params.get('target',{}).get('id',''),'activity',activity))
+        return max(-12,min(12,sum(r['weight']*10 for r in rows if r['category']=='value' and r['subject']==value
+                                 or r['category']=='material' or r['category']=='activity' and r['subject']==activity)))

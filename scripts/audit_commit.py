@@ -5,7 +5,8 @@ import sys
 
 FORBIDDEN_PARTS = {'.venv', '.tools', '.gradle', '__pycache__', 'build', 'data', 'saves',
                    'backups', '.minecraft', 'logs', 'secrets', 'node_modules'}
-FORBIDDEN_SUFFIXES = ('.sqlite', '.sqlite3', '.db', '.log', '.pem', '.key', '.pfx', '.p12', '.mca', '.mcr')
+FORBIDDEN_SUFFIXES = ('.sqlite', '.sqlite3', '.db', '.log', '.pem', '.key', '.pfx', '.p12', '.mca', '.mcr',
+                      '.gguf', '.safetensors', '.onnx')
 SECRET = re.compile(rb'(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----)')
 LOCAL_PATH = re.compile(rb'(?i)(?:[a-z]:[\\/]Users[\\/][A-Za-z0-9_. -]+|/Users/[A-Za-z0-9_.-]+/|/home/[A-Za-z0-9_.-]+/)')
 

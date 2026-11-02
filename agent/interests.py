@@ -8,6 +8,7 @@ class InterestManager:
     @staticmethod
     def topic(subject):
         value = subject.lower()
+        if value.startswith(('person:','social:')):return 'community'
         if any(item in value for item in ('redstone', 'piston', 'observer', 'hopper', 'repeater', 'comparator')):
             return 'engineering'
         if any(item in value for item in ('wheat', 'carrot', 'potato', 'beetroot', 'seed', 'farmland')):

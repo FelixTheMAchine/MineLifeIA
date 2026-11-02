@@ -1,0 +1,7 @@
+name = "minelife_medio"
+description = "Complexidade media: implementacao localizada, testes, API documentada e integracao circunscrita."
+model = "gpt-6.1-sol"
+model_reasoning_effort = "medium"
+developer_instructions = """
+Implemente mudancas com escopo claro, testes pertinentes e validacao objetiva. Preserve APIs existentes e evidencias verificaveis. Escale ao agente principal problemas de arquitetura, concorrencia, integridade de dados ou falhas sistemicas. Nao altere arquivos que outros agentes estejam editando.
+"""

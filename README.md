@@ -94,3 +94,5 @@ A publicação de diário está desativada. O publicador aceita apenas dias conc
 ## Roadmap
 
 Veja [ROADMAP.md](ROADMAP.md). Ampliação de abrigos, cozinha, uso das ferramentas, rotas maiores, agricultura/redstone/economia e vida social MCA permanecem próximos desenvolvimentos. A memória autobiográfica e as reflexões contextuais cobrem acontecimentos relevantes às capacidades implementadas. Um plano ou uma etapa isolada não confirma uma estrutura completa; metas bloqueadas não contam como capacidade executável.
+
+Guia de configuração e limites do modelo local opcional: [docs/MINELIFE_MIND.md](docs/MINELIFE_MIND.md).

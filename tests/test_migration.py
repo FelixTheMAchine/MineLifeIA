@@ -8,6 +8,22 @@ from scripts.verify_memory_upgrade import fingerprint
 
 
 class MigrationTest(unittest.TestCase):
+    def test_v8_to_v9_backs_up_and_only_adds_mind_tables(self):
+        with tempfile.TemporaryDirectory() as td:
+            path=Path(td)/'memory.sqlite3';m=MemoryManager(path)
+            m.event('a'*64,'fixture',1,'observed','Fixture histórica intacta.',True,{},'mind-upgrade')
+            for table in ('MindThoughts','MindBindings','MindEvaluations'):m.db.execute('DROP TABLE '+table)
+            m.db.execute('PRAGMA user_version=8');m.close()
+            before=fingerprint(path)
+            for _ in range(2):
+                m=MemoryManager(path)
+                for table in ('MindThoughts','MindBindings','MindEvaluations'):self.assertEqual(m.rows('SELECT * FROM '+table),[])
+                m.close()
+            self.assertEqual(before,fingerprint(path,before))
+            backups=list((path.parent/'backups').glob('*.sqlite3'))
+            self.assertEqual(len(backups),1)
+            self.assertEqual(before,fingerprint(backups[0],before))
+
     def test_v6_to_v7_preserves_storage_intent_and_all_historical_fingerprints(self):
         with tempfile.TemporaryDirectory() as td:
             path=Path(td)/'memory.sqlite3';m=MemoryManager(path)

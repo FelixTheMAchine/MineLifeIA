@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 9
 
 
 def now():
@@ -151,6 +151,12 @@ class MemoryManager:
         # Additive migration: existing knowledge, events and immutable journals remain intact.
         from agent.projects import SCHEMA as PROJECT_SCHEMA
         self.db.executescript(PROJECT_SCHEMA)
+        from agent.chapters import SCHEMA as CHAPTER_SCHEMA
+        self.db.executescript(CHAPTER_SCHEMA)
+        from agent.social import SCHEMA as SOCIAL_SCHEMA
+        self.db.executescript(SOCIAL_SCHEMA)
+        from agent.mind import MIND_SCHEMA
+        self.db.executescript(MIND_SCHEMA)
         self.db.execute(f'PRAGMA user_version={SCHEMA_VERSION}')
         self.db.commit()
 

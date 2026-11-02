@@ -22,6 +22,8 @@ from agent.routes import RouteManager
 from agent.agriculture import AgriculturePlanner
 from agent.storage import StorageManager, MATERIALS as STORAGE_MATERIALS
 from agent.projects import ProjectManager
+from agent.social import SocialManager, ACTIONS as SOCIAL_ACTIONS
+from agent.mind import ContextBuilder, ReflectionManager
 
 
 def valid_inventory(value):
@@ -30,7 +32,7 @@ def valid_inventory(value):
 
 class CognitiveEngine:
     """Cognição por eventos; um executor físico, planejamento em frequência controlada."""
-    def __init__(self, memory, journal, settings=None, clock=time.monotonic):
+    def __init__(self, memory, journal, settings=None, clock=time.monotonic, mind_config=None):
         self.m, self.journal, self.clock = memory, journal, clock
         settings = settings or {}
         self.interval = max(.5, min(10, settings.get('decision_interval', 2.0)))
@@ -45,11 +47,15 @@ class CognitiveEngine:
         self.motivation, self.exploration = MotivationEngine(memory), ExplorationManager(memory)
         self.autobiography = Autobiography(memory)
         self.language=CognitiveLanguageEngine(memory,self.autobiography,self.skills)
+        self.mind=ReflectionManager(memory,self.language,mind_config)
+        self.mind_context=ContextBuilder(memory,self.language,mind_config)
+        self.mind.set_epoch(0,str(uuid4()))
         self.identity=IdentityEngine(memory)
         self.routes=RouteManager(memory)
         self.agriculture=AgriculturePlanner(memory)
         self.storage=StorageManager(memory,self.construction,self.crafting,clock)
         self.projects=ProjectManager(memory)
+        self.social=SocialManager(memory)
         self.philosophy = PhilosophicalReflectionEngine(memory, self.autobiography)
         self.sessions, self.last_plan, self.command_sent = {}, {}, {}
         self.latest, self.last_seen, self.control = None, 0.0, None
@@ -57,6 +63,9 @@ class CognitiveEngine:
         self.planning_cycles = 0
         self.initialized = set()
         self.advice = None
+        self.m.db.execute("UPDATE SocialAttempts SET status='uncertain' WHERE status='intent'")
+        self.m.db.execute("UPDATE SocialPeople SET last_session=NULL WHERE EXISTS (SELECT 1 FROM SocialAttempts a "
+                          "WHERE a.world=SocialPeople.world AND a.person_uuid=SocialPeople.person_uuid AND a.status='uncertain')")
         self.m.db.execute("UPDATE Commands SET status='interrupted' WHERE status='sent'")
         self.m.db.execute("UPDATE Experiments SET status='interrupted' WHERE status='running'")
         self.m.db.execute("UPDATE Goals SET status='suspended' WHERE status='running'")
@@ -69,7 +78,7 @@ class CognitiveEngine:
                           (s.world, state, reason, self.dominant, now()))
 
     def _event(self, s, kind, text, evidence, dedup):
-        return self.m.event(s.world, str(s.session), s.day, kind, text, True, evidence, dedup)
+        return self.m.event(s.world, str(s.session), s.day, kind, text, True, {**evidence,'dimension':s.dimension}, dedup)
 
     def _goal_id(self, exp):
         rows = self.m.rows('SELECT goal_id FROM ExperimentGoals WHERE experiment=?', (exp['id'],))
@@ -78,6 +87,7 @@ class CognitiveEngine:
     def _command(self, s, exp, action, **extra):
         payload = dict(id=str(uuid4()), action=action, target=json.loads(exp['target']), timeout_ms=20000, **extra)
         if action.startswith('storage_'):self.storage.prepare_command(s,payload)
+        if action in SOCIAL_ACTIONS:self.social.prepare_command(s,payload)
         self.m.db.execute('INSERT INTO Commands VALUES(?,?,?,?,?,?,?,?)',
                           (payload['id'], s.world, str(s.session), exp['id'], json.dumps(payload), 'sent', None, now()))
         self.command_sent[payload['id']] = self.clock()
@@ -90,6 +100,8 @@ class CognitiveEngine:
                      'storage_inspect':'Revalidando baú e inventário',
                      'storage_deposit':'Guardando uma unidade excedente no baú',
                      'storage_withdraw':'Recuperando uma unidade para um projeto',
+                     'social_observe':'Confirmando um encontro com pessoa observada',
+                     'social_contact':'Verificando a interface de contato MCA',
                      'furnace_load':'Carregando ingrediente e combustível', 'furnace_inspect':'Inspecionando o preparo persistido',
                      'furnace_take':'Retirando itens da fornalha com verificação',
                      'craft': 'Fabricando na grade 2×2', 'craft_table': 'Fabricando na bancada 3×3',
@@ -126,6 +138,7 @@ class CognitiveEngine:
         self.m.db.execute("UPDATE Experiments SET status='completed',phase='done',evidence_ids=? WHERE id=?", (json.dumps([eid]), exp['id']))
         self.m.db.execute("UPDATE Goals SET status='completed' WHERE id=?", (gid,))
         self.m.db.execute("UPDATE Hypotheses SET status='confirmed',evidence_ids=? WHERE id=?", (json.dumps([eid]), exp['hypothesis']))
+        self.mind.record_outcome(s,gid,eid,success=True)
         plans = self.m.rows('SELECT * FROM GoalPlans WHERE goal_id=?', (gid,))
         if plans:
             self.skills.record(self.m, s.world, plans[0]['skill'], True)
@@ -156,6 +169,7 @@ class CognitiveEngine:
         gid = self._goal_id(exp)
         if cmd['action'] in FURNACE_ACTIONS:self.cooking.interrupt(s,cmd)
         if cmd['action'].startswith('storage_'):self.storage.interrupt(s,cmd)
+        if cmd['action'] in SOCIAL_ACTIONS:self.social.interrupt(s,cmd)
         self.m.db.execute('UPDATE Experiments SET status=? WHERE id=?', (status, exp['id']))
         self.m.db.execute('UPDATE Goals SET status=? WHERE id=?', (status, gid))
         personality = self.motivation.values(s.world)
@@ -168,6 +182,7 @@ class CognitiveEngine:
         eid = self._event(s, 'attempt_cancelled' if cancelled else 'attempt_failed', text,
                           {'command': cmd['id'], 'goal': gid, 'subject': target.get('id',''),
                            'reason': reason, 'outcome': status}, cmd['id'])
+        self.mind.record_outcome(s,gid,eid,success=False)
         if not cancelled:
             self.identity.observe(s,eid)
             self.autobiography.record(s.world, eid, 'setbacks', .68, .6,
@@ -219,6 +234,17 @@ class CognitiveEngine:
                 eid=self._event(s,'resource_mined',f"Removi {target['id']} usando {method}. O servidor confirmou a mineração e a variação de durabilidade de {cmd['mining'].get('tool_wear',1)} unidade(s); os itens no chão ainda precisam de coleta verificada.",ev,cmd['id'])
                 self._knowledge(s,subject,'confirmed',eid)
                 self._inventory_gains(s,cmd,ev,eid)
+        elif action in SOCIAL_ACTIONS:
+            valid &= self.social.validate(s,cmd,ev)
+            if valid:
+                person=ev['person_uuid'];name=ev['after']['name'];subject='person:'+person
+                kind='person_observed' if action=='social_observe' else 'social_contact'
+                text=(f'Observei {name}, identificado pelo UUID {person}. O servidor confirmou tipo, presença, posição, alcance e visibilidade.'
+                      if action=='social_observe' else
+                      f'Confirmei no cliente a interface MCA de contato com {name}, UUID {person}, e o estado de interação no servidor. O conteúdo de conversa e o relacionamento permanecem desconhecidos.')
+                eid=self._event(s,kind,text,ev,cmd['id'])
+                self.social.accept(s,cmd,ev,eid)
+                self._knowledge(s,subject,'confirmed',eid)
         elif action.startswith('storage_'):
             valid &= self.storage.validate(s,cmd,ev)
             if valid:
@@ -394,6 +420,9 @@ class CognitiveEngine:
         if self.latest and sid != str(self.latest.session) and tick-self.last_seen < 3:
             raise ValueError('Outro cliente está conectado')
         if previous is None:
+            self.m.db.execute("UPDATE SocialAttempts SET status='uncertain' WHERE world=? AND session<>? AND status='intent'",(s.world,sid))
+            self.m.db.execute("UPDATE SocialPeople SET last_session=NULL WHERE world=? AND EXISTS (SELECT 1 FROM SocialAttempts a "
+                              "WHERE a.world=SocialPeople.world AND a.person_uuid=SocialPeople.person_uuid AND a.status='uncertain' AND a.session<>?)",(s.world,sid))
             self.m.db.execute("UPDATE Experiments SET status='interrupted' WHERE world=? AND status='running'", (s.world,))
             self.m.db.execute("UPDATE Goals SET status='suspended' WHERE world=? AND status='running'", (s.world,))
             self.m.db.execute("UPDATE Commands SET status='interrupted' WHERE world=? AND status='sent'", (s.world,))
@@ -404,6 +433,7 @@ class CognitiveEngine:
         self.m.db.execute('INSERT OR IGNORE INTO Worlds VALUES(?,?)', (s.world, now()))
         if s.world not in self.initialized:
             self.motivation.initialize(s.world, sid, s.day)
+            self.autobiography.backfill(s.world,128)
             self.initialized.add(s.world)
         if s.seq % 4 == 1 or s.results:
             self.m.db.execute('INSERT OR IGNORE INTO Observations VALUES(?,?,?,?,?,?,?)',
@@ -429,7 +459,7 @@ class CognitiveEngine:
         else:
             pending=self.m.rows("SELECT id,payload FROM Commands WHERE world=? AND session=? AND status='sent' ORDER BY created DESC LIMIT 1",(s.world,sid))
             edible=any(self._safe_food(f.model_dump(),s.player.inventory) for f in s.player.foods)
-            interruptible={'storage_inspect','storage_deposit','storage_withdraw','build_shelter','mine','explore','till','furnace_inspect','furnace_load','furnace_take'}
+            interruptible={'storage_inspect','storage_deposit','storage_withdraw','build_shelter','mine','explore','till','furnace_inspect','furnace_load','furnace_take',*SOCIAL_ACTIONS}
             if pending and s.player.food<=food_limit and edible and 'eat' in s.capabilities and json.loads(pending[0]['payload'])['action'] in interruptible:
                 # Await the client's cancellation result before planning a meal.
                 # The click may already have reached the server; its intention stays intact.
@@ -482,6 +512,7 @@ class CognitiveEngine:
         if not force and tick-self.last_plan.get(s.world, -1e30) < self.interval: return None
         self.last_plan[s.world] = tick
         self.planning_cycles += 1
+        if self.planning_cycles%16==1:self.autobiography.backfill(s.world,128)
         self.m.db.execute("UPDATE Goals SET status='deferred' WHERE world=? AND status='pending'", (s.world,))
         self._state(s, 'PLANNING', 'Consultando memória, necessidades e oportunidades')
         self.exploration.record(s)
@@ -664,6 +695,7 @@ class CognitiveEngine:
                 offered.add(gid)
         goals = self.goals.rows(s.world)
         goals.sort(key=lambda g:g['priority']+self.language.bonus(s.world,g['kind'],json.loads(g['params']),g['subject'])
+                   +self.mind.bonus(s,g['kind'],json.loads(g['params']),g['subject'])
                    +self.identity.bonus(s.world,g['kind'],json.loads(g['params']))
                    +self.projects.bonus(s,g['kind'],json.loads(g['params'])),reverse=True)
         for goal in goals:
@@ -695,7 +727,7 @@ class CognitiveEngine:
 
     def _work_goals(self,s,personality):
         offered=set()
-        for proposal in sorted(self.crafting.proposals(s,personality)+self.mining.proposals(s,personality)+self.agriculture.proposals(s,personality),
+        for proposal in sorted(self.crafting.proposals(s,personality)+self.mining.proposals(s,personality)+self.agriculture.proposals(s,personality)+self.social.propose(s,personality),
                                key=lambda p:p['priority']+self.projects.bonus(s,p['kind'],p['params']),reverse=True):
             gid=self.goals.ensure(s,**proposal)
             if gid:
@@ -710,14 +742,16 @@ class CognitiveEngine:
         self.m.db.execute("INSERT OR IGNORE INTO Hypotheses VALUES(?,?,?,?,'hypothesis','[]')",
                           (hypothesis,s.world,goal['description'],'O experimento pode produzir evidência para este objetivo.'))
         hypothesis=self.m.rows('SELECT id FROM Hypotheses WHERE world=? AND question=?',(s.world,goal['description']))[0]['id']
-        phase=goal['kind'] if goal['kind'] in ('craft','craft_table','place','explore','mine','plant','till','storage_inspect','storage_deposit','storage_withdraw',*SHELTER_ACTIONS,*FURNACE_ACTIONS) else 'approach'
+        phase=goal['kind'] if goal['kind'] in ('craft','craft_table','place','explore','mine','plant','till','storage_inspect','storage_deposit','storage_withdraw',*SHELTER_ACTIONS,*FURNACE_ACTIONS,*SOCIAL_ACTIONS) else 'approach'
         exp=dict(id=str(uuid4()),world=s.world,session=str(s.session),hypothesis=hypothesis,
                  target=json.dumps(params['target'],sort_keys=True),phase=phase,status='running',evidence_ids='[]')
         self.m.db.execute('INSERT INTO Experiments VALUES(:id,:world,:session,:hypothesis,:target,:phase,:status,:evidence_ids)',exp)
         self.m.db.execute('INSERT INTO ExperimentGoals VALUES(?,?)',(exp['id'],goal['id']))
         self.m.db.execute("UPDATE Goals SET status='running' WHERE id=?",(goal['id'],))
-        extra={k:params[k] for k in ('recipe','placement','shelter','mining','furnace','route','planting','tilling','storage') if k in params}
-        return self._command(s,exp,phase,**extra)
+        extra={k:params[k] for k in ('recipe','placement','shelter','mining','furnace','route','planting','tilling','storage','social') if k in params}
+        command=self._command(s,exp,phase,**extra)
+        self.mind.record_selection(s,goal)
+        return command
 
     def _start_eat(self,s,food):
         prefix=f'meal:{s.day}:{food["id"]}:'
@@ -820,12 +854,20 @@ class CognitiveEngine:
         for table in ('Knowledge','Hypotheses','Experiments','Goals','JournalEntries','PublicationQueue','Questions',
                       'Interests','Motivations','SpatialRegions','Reflections','SkillProgress','PersonalityChanges',
                       'LifeMemories','PhilosophicalQuestions','PhilosophicalRevisions','CognitiveSuggestions','ConstructionProjects','FurnaceJobs','StorageJobs',
-                      'CognitivePlans','NarrativeDrafts','Preferences','PreferenceUpdates','ReturnRoutes','LongProjects'):
+                      'CognitivePlans','NarrativeDrafts','Preferences','PreferenceUpdates','ReturnRoutes','LongProjects','SocialPeople','SocialEncounters','SocialAttempts'):
             tables[table] = self.m.rows(f'SELECT * FROM {table} WHERE world=? ORDER BY rowid DESC LIMIT 60', (world,)) if world else []
         tables['construction']=self.construction.current(s) if s else None
         tables['cooking']=dict(job=self.cooking.current(s),reason=self.cooking.reason) if s else None
         tables['chapters']=self.autobiography.chapters(world) if s else []
         tables['generated_reflections']=self.philosophy.proposed_revisions(world) if s else []
+        tables['mind']=self.mind.snapshot(world) if s else {}
+        tables['mind']['context']=getattr(self.mind_context,'last_context',None) if s else None
+        tables['mind']['context_error']=getattr(self.mind_context,'last_error',None)
+        tables['mind']['actions']=[dict(id=row['id'],action=json.loads(row['payload']).get('action'),status=row['status'])
+                                  for row in self.m.rows("SELECT id,payload,status FROM Commands WHERE world=? AND session=? AND status='sent' LIMIT 8",
+                                                         (world,str(s.session)))] if s else []
+        tables['mind']['results']=self.m.rows("SELECT id,type,description,timestamp FROM Events WHERE world=? AND verified=1 "
+                                             "AND type NOT IN ('question','goal','interest') ORDER BY rowid DESC LIMIT 12",(world,)) if s else []
         p = self.m.rows('SELECT values_json FROM Personality WHERE world=?', (world,)) if world else []
         return dict(connected=connected, observation=s.model_dump(mode='json') if s else None,
                     state=self.state if connected else 'PAUSED', reason=self.reason if connected else 'Sem heartbeat do mod; controle físico desativado',
@@ -835,8 +877,17 @@ class CognitiveEngine:
 
     def record_advice(self, suggestion):
         """Persiste saídas do LLM como propostas não verificadas; não as transforma em fatos ou diário."""
-        if not suggestion or not self.latest or suggestion.get('world') != self.latest.world:
+        if not suggestion or not self.latest:return
+        if suggestion.get('mind_version')==1:
+            valid,reason=self.mind.validator.validate(self.latest,suggestion)
+            self.mind.persist(self.latest,suggestion)
+            if not valid:return
+            if suggestion['output'].get('proposal'):
+                legacy=self.mind.validator.to_legacy(suggestion)
+                plan_id=self.language.accept(self.latest,legacy)
+                if plan_id:self.mind.bind(plan_id,suggestion)
             return
+        if suggestion.get('world')!=self.latest.world:return
         source_ids = suggestion.get('source_event_ids', [])
         if any(not self.m.rows('SELECT 1 FROM Events WHERE id=? AND world=? AND verified=1', (eid, self.latest.world))
                for eid in source_ids):

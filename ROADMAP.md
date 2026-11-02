@@ -1,5 +1,11 @@
 # Roadmap
 
+## MineLife Mind — atualização 2026-11-01
+
+Implementado: Ollama local opcional, schema tipado, scheduler assíncrono limitado, recuperação contextual com proveniência, pensamentos separados de fatos, propostas validadas com influência limitada sobre o planejador e avaliação de resultados correlacionados. Observer e ferramentas de diagnóstico/benchmark foram ampliados; ver [guia do Mind](docs/MINELIFE_MIND.md) e [validação corrente](STATUS.md).
+
+Próxima prioridade: disponibilizar explicitamente `qwen3:1.7b`, medir inferência CPU e qualidade estruturada e, depois de backup/instalação pelo procedimento existente, validar influência em gameplay. Não há inferência real nem benchmark de FPS nesta revisão. Revisão semântica geral de contradições e arbitragem generativa entre projetos complexos continuam pendentes; narrativas nunca substituem fatos verificados.
+
 O status diferencia implementação, validação automatizada e observação no jogo. Não há marco de dias fixo; objetivos futuros surgem apenas quando o contexto e as habilidades suportam ações.
 
 ## Implementado e coberto por testes locais

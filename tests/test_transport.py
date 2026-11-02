@@ -83,6 +83,9 @@ class TransportTest(unittest.TestCase):
     def test_java_native_storage_contract(self):
         self._java_contract('LogisticsBridgeContractTest','storage_inspect')
 
+    def test_java_social_observation_contact_and_memory_contract(self):
+        self._java_contract('SocialBridgeContractTest',expected_requests=5)
+
     def test_java_correlated_hunger_interruption_and_meal(self):
         self._java_contract('LogisticsBridgeContractTest','interrupt',expected_requests=4)
 

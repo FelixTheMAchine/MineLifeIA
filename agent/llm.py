@@ -31,14 +31,37 @@ class LanguageAdvisor:
         self.delivered=None
         self.available_models=None
         self.availability_checked=-1e30
+        from agent.cognitive_scheduler import CognitiveScheduler
+        self._scheduler = CognitiveScheduler(self.config, transport)
+        self._mind_mode = False
+
+    @property
+    def generation(self):
+        return self._scheduler.generation
+
+    @property
+    def runtime_id(self):
+        return self._scheduler.runtime_id
+
+    def bind_scope(self, scope, allowed=True):
+        self._mind_mode = True
+        self._scheduler.bind_scope(scope, allowed)
+        self.result = None
+
+    async def health_check(self, force=False):
+        return await self._scheduler.provider.health_check(force=force)
 
     def due(self):
+        if self._mind_mode:
+            return self._scheduler.due()
         if self.config.get('provider','none')=='none' or self.task and not self.task.done():return False
         current=time.monotonic()
         self.calls=[v for v in self.calls if current-v<3600]
         return current-self.last_call>=max(30,self.config.get('interval_seconds',60)) and len(self.calls)<min(60,self.config.get('calls_per_hour',12))
 
     def take_result(self):
+        if self._mind_mode:
+            return self._scheduler.take_result()
         if self.result is None:return None
         key=hashlib.sha256(json.dumps(self.result,sort_keys=True).encode()).hexdigest()
         if key==self.delivered:return None
@@ -46,6 +69,11 @@ class LanguageAdvisor:
         return self.result
 
     def schedule(self, context, purpose='integrated'):
+        if self._mind_mode or context.get('mind_version') == 1:
+            self._mind_mode = True
+            scheduled = self._scheduler.schedule(context, purpose)
+            self.task = self._scheduler.task
+            return scheduled
         if not self.due():return
         if purpose=='auto':purpose=('cognitive','goal','philosophy','autobiography')[len(self.calls)%4]
         if purpose not in self.PURPOSES: raise ValueError('Tarefa de raciocínio desconhecida')
@@ -127,12 +155,15 @@ class LanguageAdvisor:
             self.status='fallback';self.error=type(exc).__name__;self.result=None
 
     async def close(self):
+        await self._scheduler.close()
         if self.task and not self.task.done():
             self.task.cancel()
             try: await self.task
             except asyncio.CancelledError: pass
 
     def snapshot(self):
+        if self._mind_mode:
+            return self._scheduler.snapshot()
         return {'status':self.status,'error':self.error,'calls_last_hour':len(self.calls),'suggestion_unverified':self.result,
                 'available_models':self.available_models,'physical_commands':False,
                 'prose_validation':'Texto livre permanece não verificado; somente referências factuais validadas entram no diário.'}

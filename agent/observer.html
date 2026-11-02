@@ -27,14 +27,43 @@
 <section><h2>Economia e sociedade</h2><p>Comércio e relacionamentos ainda não têm execução autônoma.</p></section>
 </div>
 <section><h2>Life Journal</h2><div id="journal"></div></section>
-<section><h2>Mente do MineLife</h2><p>Registros estruturados do software; sugestões do modelo permanecem sem verificação.</p><pre id="mind"></pre></section>
+<section><h2>Mente do MineLife</h2><p>Pensamentos são narrativas provisórias. Uma intenção aceita ainda depende do planejador e das condições de sobrevivência.</p><pre id="mind"></pre></section>
+<div class="grid">
+<section><h2>Contexto selecionado</h2><p>Fatos e memórias recuperados para a reflexão atual.</p><pre id="mind-context"></pre></section>
+<section><h2>PENSAMENTO GERADO</h2><p>Texto do modelo sem verificação factual.</p><pre id="mind-thoughts"></pre></section>
+<section><h2>HIPÓTESE</h2><p>Possibilidades a testar, com referências e incerteza.</p><pre id="mind-hypotheses"></pre></section>
+<section><h2>INTENÇÃO</h2><p>Propostas, aceitação ou rejeição e influência no planejamento.</p><pre id="mind-intentions"></pre></section>
+<section><h2>AÇÃO EM EXECUÇÃO</h2><p>Comandos enviados ao cliente; ainda não comprovam um resultado.</p><pre id="mind-actions"></pre></section>
+<section><h2>RESULTADO CONFIRMADO</h2><p>Somente eventos marcados como verificados pelo agente.</p><pre id="mind-results"></pre></section>
+</div>
 <script>
 let token='',busy=false;
 const put=(id,text)=>document.getElementById(id).textContent=text;
+const show=(id,value)=>put(id,JSON.stringify(value??[],null,2));
+function renderMind(s){
+  const m=s.mind||{},l=s.llm||{},p=l.provider||{},context=m.context||{};
+  const thoughts=Array.isArray(m.thoughts)?m.thoughts:[];
+  show('llm',{provider:p.provider||'none',modelo:p.model||null,estado:l.status||p.status||'disabled',
+    disponivel:p.available??null,inferencia_ativa:l.inference_active??false,thinking:l.thinking??false,
+    motivo_deep:l.deep_reason||null,metricas:p.metrics||null,chamadas_ultima_hora:l.calls_last_hour||0,
+    requisicoes:p.requests||0,erros:p.errors||0,erro:l.error||p.error||null,fila:l.queue_depth||0,
+    fallback:l.fallback??['fallback','disabled','budget_disabled'].includes(l.status),
+    adiamento:l.defer_reason||null,recursos:l.resource||{status:'unknown'}});
+  show('mind',{estado:l.status||'disabled',geracao:l.generation??null,
+    pensamentos:thoughts.length,intencoes:(m.intentions||[]).length,avaliacoes:(m.evaluations||[]).length});
+  show('mind-context',{fatos:context.facts||context.evidence||[],memorias:context.recalled_memories||context.memories||context.retrieved_memories||[],
+    referencias:context.source_event_ids||[],referencias_memorias:context.source_memory_ids||[],
+    contexto:context.context_id||null});
+  show('mind-thoughts',thoughts.filter(t=>t.category!=='HYPOTHESIS'));
+  show('mind-hypotheses',thoughts.filter(t=>t.category==='HYPOTHESIS'));
+  show('mind-intentions',{propostas:m.intentions||[],avaliacoes:m.evaluations||[]});
+  show('mind-actions',m.actions||[]);
+  show('mind-results',m.results||[]);
+}
 async function api(path,method='GET'){const r=await fetch(path,{method,headers:{Authorization:'Bearer '+token}});const b=await r.json();if(!r.ok)throw Error(b.detail||r.status);return b;}
 document.getElementById('connect').onclick=()=>{token=document.getElementById('token').value;refresh();};
 document.querySelectorAll('[data-action]').forEach(b=>b.onclick=async()=>{try{await api('/api/control/'+b.dataset.action,'POST');await refresh();}catch(e){put('connection',e.message);}});
 function map(s){const c=document.getElementById('map'),ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);const regions=(s.SpatialRegions||[]).filter(r=>r.dimension===s.observation?.dimension);if(!regions.length)return;const xs=regions.map(r=>r.rx),zs=regions.map(r=>r.rz),xmin=Math.min(...xs),zmin=Math.min(...zs);const scale=Math.min(20,320/(Math.max(...xs)-xmin+1),180/(Math.max(...zs)-zmin+1));for(const r of regions){ctx.fillStyle='#81c799';ctx.fillRect(15+(r.rx-xmin)*scale,15+(r.rz-zmin)*scale,Math.max(3,scale-2),Math.max(3,scale-2));}const p=s.observation.player;ctx.fillStyle='#ffd46a';ctx.beginPath();ctx.arc(15+(Math.floor(p.x/8)-xmin)*scale,15+(Math.floor(p.z/8)-zmin)*scale,4,0,Math.PI*2);ctx.fill();}
-async function refresh(){if(!token||busy)return;busy=true;try{const s=await api('/api/state');put('connection',s.connected?'Minecraft conectado · observações recebidas':'Aguardando Minecraft / conexão interrompida');put('activity',s.state);put('reason',s.reason);put('motivation','Motivação predominante: '+s.motivation+' · ciclos de planejamento: '+s.planning_cycles);const o=s.observation;put('status',o?JSON.stringify({dia:o.day,hora:o.time,ativo:o.active,vida:o.player.health,fome:o.player.food,bioma:o.biome,posicao:[o.player.x,o.player.y,o.player.z],inventario:o.player.inventory,ferramentas:o.player.tools,receitas:o.recipes},null,2):'Nenhum mundo observado');for(const [id,key] of [['goals','Goals'],['experiments','Experiments'],['knowledge','Knowledge'],['regions','SpatialRegions'],['reflections','Reflections'],['skills','skills'],['llm','llm'],['construction','construction'],['cooking','cooking'],['ideas','generated_reflections'],['preferences','Preferences'],['chapters','chapters'],['drafts','NarrativeDrafts'],['routes','ReturnRoutes']])put(id,JSON.stringify(s[key],null,2));put('questions',JSON.stringify({perguntas:s.Questions,hipoteses:s.Hypotheses,questoesFilosoficas:s.PhilosophicalQuestions},null,2));put('mind',JSON.stringify({OBSERVACAO:o,INTERPRETACAO:s.PhilosophicalRevisions,PERGUNTA:s.PhilosophicalQuestions,HIPOTESE:s.Hypotheses,DECISAO:s.Goals,REFLEXAO:s.Reflections,MEMORIA_RECUPERADA:s.LifeMemories,SUGESTOES_NAO_VERIFICADAS:s.CognitiveSuggestions},null,2));put('interests',JSON.stringify({interesses:s.Interests,motivacoes:s.Motivations},null,2));put('personality',JSON.stringify({atributos:s.personality,mudancas:s.PersonalityChanges},null,2));put('sync','Automático: DESLIGADO\n'+JSON.stringify(s.PublicationQueue,null,2));map(s);const j=document.getElementById('journal');j.replaceChildren();for(const e of s.JournalEntries){const p=document.createElement('pre');p.textContent='Dia '+e.day+' · '+e.kind+'\n'+e.text;j.append(p);}}catch(e){put('connection',e.message);}finally{busy=false;}}
+async function refresh(){if(!token||busy)return;busy=true;try{const s=await api('/api/state');put('connection',s.connected?'Minecraft conectado · observações recebidas':'Aguardando Minecraft / conexão interrompida');put('activity',s.state);put('reason',s.reason);put('motivation','Motivação predominante: '+s.motivation+' · ciclos de planejamento: '+s.planning_cycles);const o=s.observation;put('status',o?JSON.stringify({dia:o.day,hora:o.time,ativo:o.active,vida:o.player.health,fome:o.player.food,bioma:o.biome,posicao:[o.player.x,o.player.y,o.player.z],inventario:o.player.inventory,ferramentas:o.player.tools,receitas:o.recipes},null,2):'Nenhum mundo observado');for(const [id,key] of [['goals','Goals'],['experiments','Experiments'],['knowledge','Knowledge'],['regions','SpatialRegions'],['reflections','Reflections'],['skills','skills'],['llm','llm'],['construction','construction'],['cooking','cooking'],['ideas','generated_reflections'],['preferences','Preferences'],['chapters','chapters'],['drafts','NarrativeDrafts'],['routes','ReturnRoutes']])put(id,JSON.stringify(s[key],null,2));put('questions',JSON.stringify({perguntas:s.Questions,hipoteses:s.Hypotheses,questoesFilosoficas:s.PhilosophicalQuestions},null,2));put('mind',JSON.stringify({OBSERVACAO:o,INTERPRETACAO:s.PhilosophicalRevisions,PERGUNTA:s.PhilosophicalQuestions,HIPOTESE:s.Hypotheses,DECISAO:s.Goals,REFLEXAO:s.Reflections,MEMORIA_RECUPERADA:s.LifeMemories,SUGESTOES_NAO_VERIFICADAS:s.CognitiveSuggestions},null,2));put('interests',JSON.stringify({interesses:s.Interests,motivacoes:s.Motivations},null,2));put('personality',JSON.stringify({atributos:s.personality,mudancas:s.PersonalityChanges},null,2));put('sync','Automático: DESLIGADO\n'+JSON.stringify(s.PublicationQueue,null,2));renderMind(s);map(s);const j=document.getElementById('journal');j.replaceChildren();for(const e of s.JournalEntries){const p=document.createElement('pre');p.textContent='Dia '+e.day+' · '+e.kind+'\n'+e.text;j.append(p);}}catch(e){put('connection',e.message);}finally{busy=false;}}
 setInterval(refresh,1500);
 </script></html>

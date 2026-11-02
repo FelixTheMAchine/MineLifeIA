@@ -9,11 +9,13 @@ import time
 from agent.memory import now
 
 INTENTS={
+    'meet_people':('observe_person','contact_person'),
     'explore_regions':('explore_region',), 'study_material':('observe_block','mine_resource'),
     'prepare_food':('eat_food','furnace_load','harvest_crop','plant_crop'), 'make_tools':('craft_table',),
     'smelt_resources':('furnace_load',), 'build_refuge':('build_shelter',),
 }
 EVENT_DOMAINS={
+    'person_observed':{'social','place','knowledge'}, 'social_contact':{'social','place'},
     'collected':{'resources','knowledge'}, 'resource_mined':{'resources','tools','engineering'},
     'crafted':{'creation','tools','engineering'}, 'placed':{'place','creation','engineering'},
     'cooked':{'preparation','survival','engineering'}, 'ate':{'survival','preparation'},
@@ -24,6 +26,7 @@ EVENT_DOMAINS={
     'attempt_failed':{'adaptation','uncertainty'}, 'observed':{'knowledge','uncertainty'},
 }
 MEANINGS={
+    'social':('social','pessoa','person','npc','habitante','encontro','contato'),
     'home':('lar','abrigo','refug','casa','shelter','belong'),
     'survival':('fome','alimento','sobreviv','comida','food','survival','meal'),
     'engineering':('ferrament','fornalha','minera','metal','mecan','engenh','furnace','pickaxe','tool'),
@@ -50,6 +53,8 @@ class CognitiveLanguageEngine:
     def __init__(self,memory,autobiography,skills):
         self.m,self.autobiography,self.skills=memory,autobiography,skills
         self.last_context=None
+        # Persisted narrative proposals require fresh validation in this runtime.
+        self.accepted_in_runtime=set()
 
     def context(self,s,goals,personality,interests):
         available=[dict(subject=g['subject'],description=g['description'],skill=g['skill']) for g in goals if g['status'] in ('pending','running')][:8]
@@ -97,7 +102,9 @@ class CognitiveLanguageEngine:
         fields={k:str(value.get(k,''))[:1800] for k in ('question','hypothesis','interpretation','reflection','journal_draft')}
         identity=dict(world=s.world,intent=intent,subject=preferred,sources=sources,fields=fields,context=value.get('context_id'))
         key=digest(identity)
-        if self.m.rows('SELECT id FROM CognitivePlans WHERE id=?',(key,)):return key
+        if self.m.rows('SELECT id FROM CognitivePlans WHERE id=?',(key,)):
+            self.accepted_in_runtime.add(key)
+            return key
         executable=any(self.skills.available(skill,s.capabilities) for skill in INTENTS[intent])
         previous=self.m.rows('SELECT id FROM CognitivePlans WHERE world=? AND intent=? ORDER BY created DESC,rowid DESC LIMIT 1',(s.world,intent))
         claims=value.get('claims',[]);authorized={e['id']:e['description'] for e in facts}
@@ -112,10 +119,12 @@ class CognitiveLanguageEngine:
         self.m.db.execute('INSERT INTO NarrativeDrafts VALUES(?,?,?,?,?,?,?,?)',
                           (key,s.world,s.day,fields['journal_draft'],json.dumps(claims,ensure_ascii=False),'unverified_prose',json.dumps(sources),now()))
         # No text from the LLM is inserted into factual Events, Knowledge or verified interpretations.
+        self.accepted_in_runtime.add(key)
         return key
 
     @staticmethod
     def intent_for(kind,params):
+        if kind in ('social_observe','social_contact'):return 'meet_people'
         output=params.get('recipe',{}).get('output_id','')
         if kind=='explore':return 'explore_regions'
         if kind in ('mine','observe'):return 'study_material'
@@ -126,5 +135,8 @@ class CognitiveLanguageEngine:
 
     def bonus(self,world,kind,params,subject):
         intent=self.intent_for(kind,params)
-        rows=self.m.rows("SELECT intent,preferred_subject FROM CognitivePlans WHERE world=? AND status='actionable_proposal' AND expires>? ORDER BY created DESC,rowid DESC LIMIT 4",(world,time.time()))
+        rows=self.m.rows("SELECT id,intent,preferred_subject FROM CognitivePlans WHERE world=? AND status='actionable_proposal' AND expires>? "
+                         "AND NOT EXISTS (SELECT 1 FROM MindBindings b WHERE b.plan_id=CognitivePlans.id) "
+                         "ORDER BY created DESC,rowid DESC LIMIT 4",(world,time.time()))
+        rows=[p for p in rows if p['id'] in self.accepted_in_runtime]
         return max((24 if p['preferred_subject']==subject else 16 if p['intent']==intent else 0 for p in rows),default=0)

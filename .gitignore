@@ -36,6 +36,10 @@ saves/
 .minecraft/
 *.mca
 *.mcr
+*.gguf
+*.safetensors
+*.onnx
+inference-cache/
 level.dat*
 session.lock
 *.tmp
