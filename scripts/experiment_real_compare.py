@@ -53,15 +53,16 @@ def _conditions(seed):
                 health=step.player.health, food=step.player.food, danger=step.player.danger)
 
 
-async def _real_arm(base, root, seed, scenario, arm, provider, process_check, probe, *, skip_reason=None):
+async def _real_arm(base, root, seed, scenario, arm, provider, process_check, probe,
+                    *, context_tokens, max_output_tokens, skip_reason=None):
     path = root / f'{arm}.sqlite3'
     with closing(sqlite3.connect(path)) as destination:
         base.db.backup(destination)
     memory = MemoryManager(path)
     try:
         engine = _engine(memory, root / arm)
-        engine.mind_context.config = dict(context_tokens=1800, num_ctx=OPTIONS['num_ctx'],
-                                          max_output_tokens=OPTIONS['max_output_tokens'])
+        engine.mind_context.config = dict(context_tokens=context_tokens, num_ctx=OPTIONS['num_ctx'],
+                                          max_output_tokens=max_output_tokens)
         step = _step(seed, 3, blocks=[dict(x=scenario['block_x'], y=64, z=0,
                                           id='minecraft:stone', log=False)],
                      frontiers=[dict(x=scenario['frontier_x'], y=64, z=0, safe=True,
@@ -135,18 +136,24 @@ async def _real_arm(base, root, seed, scenario, arm, provider, process_check, pr
 
 
 async def run_real_experiment(seeds=(19,), *, model='qwen3.5:4b-q4_K_M', timeout=60,
+                              context_tokens=1800, max_output_tokens=384,
                               provider=None, process_check=None, probe=None):
     seeds = tuple(seeds)
     if not seeds or len(seeds)>3 or any(type(seed) is not int or not 0<=seed<2**32 for seed in seeds):
         raise ValueError('seeds_must_be_1_to_3_unsigned_integers')
     if not safe_name(model) or type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0<timeout<=60:
         raise ValueError('invalid_model_or_timeout')
+    if type(context_tokens) is not int or not 400<=context_tokens<=1800:
+        raise ValueError('invalid_context_tokens')
+    if type(max_output_tokens) is not int or not 128<=max_output_tokens<=384:
+        raise ValueError('invalid_max_output_tokens')
+    options=OPTIONS | dict(max_output_tokens=max_output_tokens)
     process_check = process_check or minecraft_process_status
     probe = probe or ResourceProbe(interval=1)
     report = dict(protocol_version=1, status='skipped', synthetic=True, gameplay_verified=False,
                   model=model, model_inference=False, private_memory_read=False, runs=[],
                   database_isolation='independent_temporary_sqlite_backups',
-                  options=OPTIONS | dict(timeout_seconds=timeout), resource_limits=RESOURCE_LIMITS,
+                  options=options | dict(timeout_seconds=timeout,context_tokens=context_tokens), resource_limits=RESOURCE_LIMITS,
                   max_inference_calls=2*len(seeds), thinking=False,
                   limitations=['Synthetic contract decisions only; no gameplay or subsequent physical outcomes.',
                                'One bounded serial model call per B/C arm; no retries or model downloads.',
@@ -162,7 +169,7 @@ async def run_real_experiment(seeds=(19,), *, model='qwen3.5:4b-q4_K_M', timeout
     if process != 'clear':
         report['reason'] = 'minecraft_running' if process == 'running' else 'minecraft_process_unknown'
         return report
-    provider = provider or LocalModelProvider(OPTIONS | dict(model=model, timeout_seconds=timeout))
+    provider = provider or LocalModelProvider(options | dict(model=model, timeout_seconds=timeout))
     health = await provider.health_check()
     if not health.get('available'):
         report['reason'] = health.get('error') if health.get('error') in ('model_missing','unavailable','timeout') else 'model_unavailable'
@@ -185,6 +192,7 @@ async def run_real_experiment(seeds=(19,), *, model='qwen3.5:4b-q4_K_M', timeout
                 pair_skip = None
                 for arm in order:
                     measured = await _real_arm(base, root, seed, scenario, arm, provider, process_check, probe,
+                                               context_tokens=context_tokens,max_output_tokens=max_output_tokens,
                                                skip_reason=pair_skip)
                     arms.append(measured)
                     if measured['status'] != 'completed':
@@ -206,6 +214,8 @@ def main(argv=None):
     parser.add_argument('--seeds', type=int, nargs='+', default=(19,))
     parser.add_argument('--model', default='qwen3.5:4b-q4_K_M')
     parser.add_argument('--timeout', type=float, default=60)
+    parser.add_argument('--context-tokens', type=int, default=1800)
+    parser.add_argument('--max-output-tokens', type=int, default=384)
     args = parser.parse_args(argv)
     try:
         report = asyncio.run(run_real_experiment(**vars(args)))

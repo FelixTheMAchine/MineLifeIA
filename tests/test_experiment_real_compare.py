@@ -86,6 +86,20 @@ class RealExperimentCompareTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(arms['C']['influenced'])
         self.assertEqual(arms['C']['confirmed_action_outcomes'],0)
 
+    async def test_compact_budget_keeps_verified_memory_ablation(self):
+        ordinary=await self.run_fixture(MockProvider())
+        compact=await self.run_fixture(MockProvider(),context_tokens=900,max_output_tokens=192)
+        arms={arm['arm']:arm for arm in compact['runs'][0]['arms']}
+        normal={arm['arm']:arm for arm in ordinary['runs'][0]['arms']}
+        self.assertEqual(compact['options']['context_tokens'],900)
+        self.assertEqual(compact['options']['max_output_tokens'],192)
+        self.assertEqual((arms['B']['recalled_memories'],arms['C']['recalled_memories']),(0,1))
+        self.assertEqual((arms['B']['source_events'],arms['C']['source_events']),(1,1))
+        self.assertTrue(arms['B']['suggestion_accepted'])
+        self.assertTrue(arms['C']['suggestion_accepted'])
+        self.assertLess(arms['B']['prompt_json_bytes'],normal['B']['prompt_json_bytes'])
+        self.assertLess(arms['C']['prompt_json_bytes'],normal['C']['prompt_json_bytes'])
+
     async def test_timeout_records_fallback_and_preserves_deterministic_choice(self):
         provider=MockProvider(failure='timeout')
         report=await self.run_fixture(provider)

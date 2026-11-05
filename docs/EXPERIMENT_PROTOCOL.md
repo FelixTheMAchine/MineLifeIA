@@ -8,6 +8,8 @@ O primeiro ensaio de infraestrutura está em `scripts/experiment_compare.py` (`p
 
 `scripts/experiment_real_compare.py` usa a mesma fixture com até uma inferência Ollama local por braço B/C, sem ler configuração ou memória privada. Seu relatório separa saída válida, intenção vinculada, influência na escolha e resultado físico (ausente nesta fixture). Se faltar RAM, o processo Minecraft estiver ativo/desconhecido, ocorrer timeout ou a primeira inferência não terminar, o par fica parcial e não pode ser usado para inferir efeito da memória. O guarda experimental exige 4.096 MB de RAM livre antes da chamada; essa reserva foi elevada após uma execução local inconclusiva com pressão de memória, não é uma calibração universal.
 
+O orçamento de contexto e a saída máxima são parâmetros explícitos do relatório (`--context-tokens`, `--max-output-tokens`), iguais para B e C. A fixture com 900/192 manteve o fato em ambos os braços e um episódio somente em C nos testes simulados, mas a chamada real de B ainda atingiu 60 s. Comparar perfis exige fixar esses parâmetros previamente e relatar timeouts; um par incompleto não fornece estimativa de eficácia.
+
 - **A — determinístico:** planejador atual sem chamada ao LLM e sem recuperação episódica.
 - **B — LLM sem episódios:** mesmo planejador e modelo de C, com intenções contextuais, mas sem memórias episódicas recuperadas.
 - **C — LLM com episódios verificáveis:** configuração B com recuperação limitada a episódios cuja proveniência e resultado estejam confirmados.
