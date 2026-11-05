@@ -87,8 +87,8 @@ class CognitionTest(unittest.TestCase):
         self.m.db.execute('UPDATE Events SET evidence=? WHERE id=?',(json.dumps({'subject':'minecraft:stone'}),failure))
         self.engine.identity.observe(self.engine.latest,failure)
         after=self.m.rows("SELECT weight FROM Preferences WHERE category='material'")[0]['weight']
-        self.assertLess(after,before)
-        self.assertEqual(len(self.m.rows("SELECT * FROM PreferenceUpdates WHERE category='material'")),2)
+        self.assertEqual(after,before)
+        self.assertEqual(len(self.m.rows("SELECT * FROM PreferenceUpdates WHERE category='material'")),1)
         self.assertEqual(self.engine.identity.bonus('b'*64,'mine',dict(target={'id':'minecraft:stone'})),0)
 
     def test_context_is_bounded_and_separates_knowledge_interpretations_and_facts(self):

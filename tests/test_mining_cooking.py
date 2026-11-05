@@ -73,11 +73,14 @@ class MiningCookingTest(unittest.TestCase):
                     mined_delta=1,tool_id=ORE['tool_id'],tool_suitable=True,tool_before_damage=0,tool_after_damage=1,
                     inventory_before=inv,inventory_after=inv)
 
-    def test_tool_use_continues_after_success_without_inventing_drops(self):
+    def test_tool_use_waits_for_drop_then_resumes_without_inventing_drops(self):
         inv={ORE['tool_id']:1}
         first=self.frame(inv,mining=[ORE])['command'];self.assertEqual(first['action'],'mine')
         other={**ORE,'x':3,'tool_damage':1}
-        second=self.frame(inv,[self.success(first,self.mine_proof(first,inv))],mining=[other])['command']
+        response=self.frame(inv,[self.success(first,self.mine_proof(first,inv))],mining=[other])
+        self.assertIsNone(response['command'])
+        for _ in range(3):response=self.frame(inv,mining=[other])
+        second=response['command']
         self.assertEqual(second['action'],'mine');self.assertNotEqual(first['id'],second['id'])
         self.assertTrue(self.m.rows("SELECT * FROM Knowledge WHERE subject='mining:minecraft:stone' AND status='confirmed'"))
         self.assertFalse(self.m.rows("SELECT * FROM Events WHERE type='collected'"))
@@ -223,9 +226,14 @@ class MiningCookingTest(unittest.TestCase):
         self.assertFalse(self.m.rows("SELECT * FROM Events WHERE type='cooked'"))
         # A new inspection confirms that the output is still there. The earlier take is not replayed.
         retry=self.furnace_frame(inv,[self.success(fresh,self.proof(fresh,self.snapshot(inv,output=1,lit=True)))])['command']
-        self.assertEqual(retry['action'],'furnace_take');self.assertNotEqual(retry['id'],take['id'])
-        after={**inv,COOK['output_id']:1}
-        self.furnace_frame(after,[self.success(retry,self.proof(retry,self.snapshot(inv,output=1,lit=True),self.snapshot(after,lit=True),2))])
+        self.assertIsNone(retry)  # Reinspection must not bypass the failed goal's cooldown.
+        import time
+        from unittest.mock import patch
+        with patch('agent.goals.time.time',return_value=time.time()+self.engine.goals.cooldown+1):
+            retry=self.furnace_frame(inv)['command']
+            self.assertEqual(retry['action'],'furnace_take');self.assertNotEqual(retry['id'],take['id'])
+            after={**inv,COOK['output_id']:1}
+            self.furnace_frame(after,[self.success(retry,self.proof(retry,self.snapshot(inv,output=1,lit=True),self.snapshot(after,lit=True),2))])
         self.assertEqual(len(self.m.rows("SELECT * FROM Events WHERE type='cooked'")),1)
 
     def test_furnace_proof_requires_station_world_job_and_owned_interface(self):
@@ -300,17 +308,28 @@ class MiningCookingTest(unittest.TestCase):
     def test_furnace_failure_budget_survives_reinspection(self):
         c=self.furnace_frame()['command']
         c=self.furnace_frame(results=[self.success(c,self.proof(c,self.snapshot(STOCK)))])['command']
-        for _ in range(2):
-            self.furnace_frame(results=[dict(id=c['id'],status='failed',reason='inventory_full',evidence={})])
-            self.t+=6
-            inspect=self.furnace_frame()['command']
-            if inspect is None:
-                c=None
-                break
-            self.assertEqual(inspect['action'],'furnace_inspect')
-            c=self.furnace_frame(results=[self.success(inspect,self.proof(inspect,self.snapshot(STOCK)))])['command']
+        import time
+        from unittest.mock import patch
+        clock=[time.time()]
+        with patch('agent.goals.time.time',side_effect=lambda:clock[0]):
+            for attempt in range(2):
+                fresh=self.furnace_frame(results=[dict(id=c['id'],status='failed',reason='path_obstructed',evidence={})])['command']
+                if fresh is not None:
+                    self.assertEqual(fresh['action'],'furnace_inspect')
+                    c=self.furnace_frame(results=[self.success(fresh,self.proof(fresh,self.snapshot(STOCK)))])['command']
+                    self.assertIsNone(c)
+                clock[0]+=self.engine.goals.cooldown+1
+                self.t+=6
+                inspect=self.furnace_frame()['command']
+                if inspect is None:
+                    c=None
+                    break
+                self.assertEqual(inspect['action'],'furnace_inspect')
+                c=self.furnace_frame(results=[self.success(inspect,self.proof(inspect,self.snapshot(STOCK)))])['command']
+                if attempt==0:self.assertIsNotNone(c)
         self.assertIsNone(c)
         self.assertTrue(self.m.rows("SELECT * FROM FurnaceJobs WHERE status='conflict'"))
+        self.assertEqual(self.m.rows("SELECT coalesce(sum(attempts),0) n FROM GoalPlans WHERE kind='furnace_load'")[0]['n'],2)
 
     def test_furnace_crafting_and_placement_connect_to_observed_food(self):
         caps=CAPS+['craft','craft_table','place']

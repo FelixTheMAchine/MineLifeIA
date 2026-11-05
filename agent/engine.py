@@ -4,6 +4,7 @@ import time
 from uuid import uuid4
 from agent.memory import now
 from agent.motivation import MotivationEngine, PERSONALITY
+from agent.needs import project_needs
 from agent.interests import InterestManager
 from agent.goals import GoalManager
 from agent.skills import SkillRegistry
@@ -18,6 +19,7 @@ from agent.mining import MiningPlanner, mining_evidence
 from agent.cooking import CookingManager, ACTIONS as FURNACE_ACTIONS
 from agent.cognition import CognitiveLanguageEngine
 from agent.identity import IdentityEngine
+from agent.failure_assessment import assess_failure
 from agent.routes import RouteManager
 from agent.agriculture import AgriculturePlanner
 from agent.storage import StorageManager, MATERIALS as STORAGE_MATERIALS
@@ -54,7 +56,7 @@ class CognitiveEngine:
         self.routes=RouteManager(memory)
         self.agriculture=AgriculturePlanner(memory)
         self.storage=StorageManager(memory,self.construction,self.crafting,clock)
-        self.projects=ProjectManager(memory)
+        self.projects=ProjectManager(memory,safety_limits=self.motivation.safety_limits)
         self.social=SocialManager(memory)
         self.philosophy = PhilosophicalReflectionEngine(memory, self.autobiography)
         self.sessions, self.last_plan, self.command_sent = {}, {}, {}
@@ -167,6 +169,8 @@ class CognitiveEngine:
 
     def _failure(self, s, exp, cmd, reason, status='failed'):
         gid = self._goal_id(exp)
+        assessment = assess_failure(status, reason)
+        if cmd['action']=='pickup':self.mining.pickup_outcome(s,gid,cmd,cancelled=status=='cancelled',reason=reason)
         if cmd['action'] in FURNACE_ACTIONS:self.cooking.interrupt(s,cmd)
         if cmd['action'].startswith('storage_'):self.storage.interrupt(s,cmd)
         if cmd['action'] in SOCIAL_ACTIONS:self.social.interrupt(s,cmd)
@@ -174,27 +178,23 @@ class CognitiveEngine:
         self.m.db.execute('UPDATE Goals SET status=? WHERE id=?', (status, gid))
         personality = self.motivation.values(s.world)
         self.goals.cooldown = max(30, min(180, 60 + (personality['prudence']-60)*.5 - (personality['persistence']-90)*.2))
-        self.goals.failure(gid, reason, status == 'cancelled')
+        self.goals.failure(gid, reason, status == 'cancelled', uncertain=not assessment.count_attempt)
         cancelled = status == 'cancelled'
         text = ('Interrompi uma ação após a suspensão do controle; isso não contradiz minha hipótese.' if cancelled else
                 f"Minha tentativa de {cmd['action']} não terminou com evidência suficiente ({reason}). Vou considerar outra oportunidade antes de tentar novamente.")
         target = json.loads(exp['target'])
         eid = self._event(s, 'attempt_cancelled' if cancelled else 'attempt_failed', text,
                           {'command': cmd['id'], 'goal': gid, 'subject': target.get('id',''),
-                           'reason': reason, 'outcome': status}, cmd['id'])
+                           'reason': reason, 'outcome': status, 'failure_category': assessment.category,
+                           'physical_outcome': 'inconclusive', 'origin': assessment.origin}, cmd['id'])
         self.mind.record_outcome(s,gid,eid,success=False)
         if not cancelled:
-            self.identity.observe(s,eid)
-            self.autobiography.record(s.world, eid, 'setbacks', .68, .6,
+            self.autobiography.record(s.world, eid, 'uncertain_attempts', .55, .5,
                                       {'day': s.day, 'subject': target.get('id',''), 'reason': reason})
             self.philosophy.consider(s.world, s.day, str(s.session), eid)
-            plans = self.m.rows('SELECT skill FROM GoalPlans WHERE goal_id=?', (gid,))
-            if plans: self.skills.record(self.m, s.world, plans[0]['skill'], False)
-            self.interests.update(s, self.interests.topic(json.loads(exp['target'])['id']), eid, False)
-            self.motivation.learn(s, eid, False)
         self.m.db.execute('INSERT OR IGNORE INTO Reflections VALUES(?,?,?,?,?,?,?,?)',
-                          (str(uuid4()), s.world, exp['id'], 'FAILURE', 0.0, json.dumps([eid]),
-                           'Aplicar cooldown, mudar alvo; abandonar após duas falhas', now()))
+                          (str(uuid4()), s.world, exp['id'], 'UNCERTAIN', 0.0, json.dumps([eid]),
+                           'Aplicar cooldown e reobservar antes de atribuir causa física.', now()))
         self.journal.write(s.world, s.day, 'reflection', eid)
 
     def _result(self, s, result):
@@ -234,6 +234,7 @@ class CognitiveEngine:
                 eid=self._event(s,'resource_mined',f"Removi {target['id']} usando {method}. O servidor confirmou a mineração e a variação de durabilidade de {cmd['mining'].get('tool_wear',1)} unidade(s); os itens no chão ainda precisam de coleta verificada.",ev,cmd['id'])
                 self._knowledge(s,subject,'confirmed',eid)
                 self._inventory_gains(s,cmd,ev,eid)
+                self.mining.intend(s,self._goal_id(exp),cmd,verified=True)
         elif action in SOCIAL_ACTIONS:
             valid &= self.social.validate(s,cmd,ev)
             if valid:
@@ -397,11 +398,15 @@ class CognitiveEngine:
                               ((present_after is False) or (type(count_before) is int and type(count_after) is int and count_after < count_before)))
             valid &= (ev.get('server_verified') is True and valid_inventory(before) and valid_inventory(after)
                       and ev.get('item_id') == item_id and ev.get('entity_id') == item['entity_id']
-                      and type(old_count) is int and type(new_count) is int and new_count > old_count and entity_changed)
+                      and ev.get('entity_changed') is not True
+                      and type(old_count) is int and type(new_count) is int and new_count > old_count and entity_changed
+                      and type(count_before) is int and type(count_after) is int and 0<=count_after<count_before
+                      and new_count-old_count<=count_before-count_after)
             if valid:
                 subject = item_id
                 eid = self._event(s, 'collected', f'Recolhi {new_count-old_count} unidade(s) de {item_id}; o inventário e a redução ou remoção da entidade de item foram confirmados pelo servidor.', ev, cmd['id'])
                 self._knowledge(s, subject, 'confirmed', eid)
+                self.mining.pickup_outcome(s,self._goal_id(exp),cmd,success=True)
         else: valid = False
         if not valid:
             self.m.db.execute("UPDATE Commands SET status='unverified' WHERE id=?", (cmd['id'],))
@@ -420,6 +425,9 @@ class CognitiveEngine:
         if self.latest and sid != str(self.latest.session) and tick-self.last_seen < 3:
             raise ValueError('Outro cliente está conectado')
         if previous is None:
+            prior_worlds=self.m.rows('SELECT DISTINCT world FROM Observations WHERE session=? LIMIT 2',(sid,))
+            if any(row['world']!=s.world for row in prior_worlds):
+                raise ValueError('Sessão já vinculada a outro mundo persistido')
             self.m.db.execute("UPDATE SocialAttempts SET status='uncertain' WHERE world=? AND session<>? AND status='intent'",(s.world,sid))
             self.m.db.execute("UPDATE SocialPeople SET last_session=NULL WHERE world=? AND EXISTS (SELECT 1 FROM SocialAttempts a "
                               "WHERE a.world=SocialPeople.world AND a.person_uuid=SocialPeople.person_uuid AND a.status='uncertain' AND a.session<>?)",(s.world,sid))
@@ -459,13 +467,16 @@ class CognitiveEngine:
         else:
             pending=self.m.rows("SELECT id,payload FROM Commands WHERE world=? AND session=? AND status='sent' ORDER BY created DESC LIMIT 1",(s.world,sid))
             edible=any(self._safe_food(f.model_dump(),s.player.inventory) for f in s.player.foods)
-            interruptible={'storage_inspect','storage_deposit','storage_withdraw','build_shelter','mine','explore','till','furnace_inspect','furnace_load','furnace_take',*SOCIAL_ACTIONS}
+            interruptible={'storage_inspect','storage_deposit','storage_withdraw','build_shelter','mine','pickup','explore','till','furnace_inspect','furnace_load','furnace_take',*SOCIAL_ACTIONS}
             if pending and s.player.food<=food_limit and edible and 'eat' in s.capabilities and json.loads(pending[0]['payload'])['action'] in interruptible:
                 # Await the client's cancellation result before planning a meal.
                 # The click may already have reached the server; its intention stays intact.
                 response['interrupt']=pending[0]['id']
                 self._state(s,'SURVIVAL','Interromper trabalho atual para usar alimento disponível; preservar o progresso.')
-            else:response['command'] = self.decide(s, changed or previous is None)
+            else:
+                response['command'] = self.decide(s, changed or previous is None)
+                if self.control in ('pause','stop'):
+                    response['control'] = self.control
         if not s.active or not s.armed or unsafe or response['control'] in ('stop', 'pause'):
             self.projects.suspend(s,'Controle pausado ou condicao fisiologica insegura; preservar progresso.')
             self.m.db.execute("UPDATE Goals SET status='suspended' WHERE world=? AND status='running'", (s.world,))
@@ -513,14 +524,18 @@ class CognitiveEngine:
         self.last_plan[s.world] = tick
         self.planning_cycles += 1
         if self.planning_cycles%16==1:self.autobiography.backfill(s.world,128)
-        self.m.db.execute("UPDATE Goals SET status='deferred' WHERE world=? AND status='pending'", (s.world,))
+        self.goals.begin_cycle(s.world)
         self._state(s, 'PLANNING', 'Consultando memória, necessidades e oportunidades')
         self.exploration.record(s)
         known = {r['subject']: r for r in self.m.rows("SELECT * FROM Knowledge WHERE world=? AND status='confirmed'", (s.world,))}
         need_wood=self.crafting.needs_wood(s)
         candidates = [b for b in s.blocks if not b.bed and (b.harvestable or b.log and need_wood or (b.id if b.log else 'observation:'+b.id) not in known)]
         frontiers = self.exploration.candidates(s)
-        self.dominant, personality = self.motivation.evaluate(s, bool(candidates), len(frontiers))
+        exploration_history = self.exploration.yield_history(s)
+        frontier_scores = [(length,key,target,self.exploration.score(s,length,target,exploration_history))
+                           for length,key,target in frontiers]
+        exploration_score = max((score for _,_,_,score in frontier_scores), key=lambda score:score['score'], default=None)
+        self.dominant, personality = self.motivation.evaluate(s, bool(candidates), len(frontiers), exploration_score)
         self._derive(s, known)
         offered=set()
         # Food, its observed sources and executable preparation are considered before curiosity.
@@ -606,6 +621,15 @@ class CognitiveEngine:
             if s.dimension!='minecraft:overworld': reason='Repouso em cama não disponível nesta dimensão; aguardando condição segura.'
             self._state(s, 'WAITING_FOR_SAFE_ACTION', reason)
             return None
+        drop=self.mining.pending_drop(s)
+        if drop is not None and 'pickup' in s.capabilities:
+            command=self._start_pickup(s,drop,250,'Recolher recurso necessário já observado antes de minerar outro bloco.','SHORT_TERM')
+            if command:return command
+        acquisition_pending=self.mining.acquisition_pending(s) or drop is not None
+        if acquisition_pending:
+            # Retry cooldown preserves the acquisition instead of sending the player away.
+            self._state(s,'WAITING_FOR_SAFE_ACTION','Aguardar recurso observado ou nova tentativa limitada de coleta antes de explorar.')
+            return None
         farm_drop=self.agriculture.pending_drop(s)
         if farm_drop is not None:
             command=self._start_pickup(s,farm_drop,255,'Recolher sementes ou produtos observados perto de um cultivo colhido; a origem do item ainda não foi atribuída.','SHORT_TERM')
@@ -635,10 +659,6 @@ class CognitiveEngine:
             if route:
                 command=self._offer_project(s,route)
                 if command:return command
-        drop=self.mining.pending_drop(s)
-        if drop is not None and 'pickup' in s.capabilities:
-            command=self._start_pickup(s,drop,250,'Recolher recurso necessário já observado antes de minerar outro bloco.','SHORT_TERM')
-            if command:return command
         need_wood=self.crafting.needs_wood(s)
         candidates = [b for b in s.blocks if not b.bed and (b.harvestable or b.log and need_wood or (b.id if b.log else 'observation:'+b.id) not in known)]
         native_project=self.construction.current(s)
@@ -684,26 +704,47 @@ class CognitiveEngine:
             if gid:
                 self.goals.question(s, subject, question)
                 offered.add(gid)
-        for length, key, target in frontiers:
+        for length, key, target, score in frontier_scores:
+            if acquisition_pending:break
             if not self.skills.available('explore_region', s.capabilities): break
+            # Eligibility is physical/deterministic; narrative bonuses only rank
+            # goals that have already met the activity threshold.
+            if not score['eligible']:continue
             subject = f'explore:{s.dimension}:{key}'
             gid = self.goals.ensure(s, subject, 'Explorar uma região ainda não visitada',
-                                    'Fronteira local anunciada pelo navegador; caminho será revalidado a cada passo.',
-                                    70 + personality['exploration']*.1 + (personality['ambition']-75)*.1 - length*.1, 'explore', {'target': target}, 'explore_region')
+                                    'Fronteira local; caminho será revalidado. '+json.dumps(score,sort_keys=True),
+                                    score['score'], 'explore', {'target': target}, 'explore_region')
             if gid:
                 self.goals.question(s, subject, 'Que recursos e bioma vou observar na próxima região acessível?')
                 offered.add(gid)
         goals = self.goals.rows(s.world)
-        goals.sort(key=lambda g:g['priority']+self.language.bonus(s.world,g['kind'],json.loads(g['params']),g['subject'])
-                   +self.mind.bonus(s,g['kind'],json.loads(g['params']),g['subject'])
-                   +self.identity.bonus(s.world,g['kind'],json.loads(g['params']))
-                   +self.projects.bonus(s,g['kind'],json.loads(g['params'])),reverse=True)
+        ranked = []
         for goal in goals:
+            params = json.loads(goal['params'])
+            components = dict(priority=goal['priority'],
+                              prior_cognitive=self.language.bonus(s.world,goal['kind'],params,goal['subject']),
+                              learned_preferences=self.identity.bonus(s.world,goal['kind'],params),
+                              project=self.projects.bonus(s,goal['kind'],params),
+                              mind=self.mind.bonus(s,goal['kind'],params,goal['subject']))
+            base = sum(value for key,value in components.items() if key != 'mind')
+            ranked.append((goal,base,components['mind'],components))
+        eligible = [entry for entry in ranked if entry[0]['id'] in offered and entry[0]['status']=='pending'
+                    and entry[0]['cooldown']<=time.time() and self.skills.available(entry[0]['skill'],s.capabilities)]
+        eligible_ids = {entry[0]['id'] for entry in eligible}
+        baseline = max(eligible,key=lambda entry:entry[1])[0]['id'] if eligible else None
+        ranked.sort(key=lambda entry:entry[1]+entry[2],reverse=True)
+        for goal,_,mind_bonus,_ in ranked:
             if goal['id'] not in offered or goal['status'] != 'pending' or goal['cooldown'] > time.time(): continue
             if not self.skills.available(goal['skill'], s.capabilities):
                 self.m.db.execute("UPDATE Goals SET status='blocked',reason='Habilidade não anunciada pelo mod' WHERE id=?", (goal['id'],))
                 continue
-            return self._start_planned(s,goal)
+            influenced=bool(mind_bonus and goal['id']!=baseline)
+            alternatives=[dict(goal=other['id'],kind=other['kind'],subject=other['subject'],
+                               components=parts,total=base_score+mind_score)
+                          for other,base_score,mind_score,parts in ranked
+                          if other['id'] in eligible_ids][:8]
+            return self._start_planned(s,goal,mind_influenced=influenced,
+                                       comparison=dict(baseline=baseline,alternatives=alternatives))
         if 'pickup' in s.capabilities:
             resource = self.foods.choose_resource(s.items, s.player, s.player.inventory)
             if resource is not None:
@@ -713,6 +754,8 @@ class CognitiveEngine:
                 if pickup_command is not None:
                     return pickup_command
         reason = f'Nenhuma novidade executável ou fronteira não visitada com rota segura. Reavaliando a cada {self.interval} s.'
+        if exploration_score and not exploration_score['eligible']:
+            reason = 'Baixa atividade: rendimento esperado de exploração abaixo do limiar; reavaliar oportunidades e recuperação temporal. '+json.dumps(exploration_score,sort_keys=True)
         if self.construction.current(s):reason+=' Projeto: '+self.construction.reason
         if 'explore' not in s.capabilities: reason += ' Instale o mod 0.2 para anunciar exploração e crafting.'
         self._state(s, 'WAITING_FOR_SAFE_ACTION', reason)
@@ -735,7 +778,21 @@ class CognitiveEngine:
                 offered.add(gid)
         return offered
 
-    def _start_planned(self,s,goal):
+    def _record_goal_selection(self,s,goal,command,*,mind_influenced=False,comparison=None):
+        observation=self.m.rows('SELECT id FROM Observations WHERE session=? AND seq=?',(str(s.session),s.seq))
+        if not observation:
+            self.m.db.execute('INSERT OR IGNORE INTO Observations VALUES(?,?,?,?,?,?,?)',
+                              (str(uuid4()),s.world,str(s.session),s.day,now(),s.seq,s.model_dump_json()))
+            observation=self.m.rows('SELECT id FROM Observations WHERE session=? AND seq=?',(str(s.session),s.seq))
+        evidence=dict(goal=goal['id'],command=command['id'],observation_id=observation[0]['id'],observation_seq=s.seq,
+                      reason=goal['reason'],mind_influenced=mind_influenced,
+                      mode='ranked' if comparison is not None else 'direct',
+                      baseline=comparison['baseline'] if comparison else None,
+                      alternatives=comparison['alternatives'] if comparison else [])
+        self._event(s,'goal_selected','Meta selecionada entre oportunidades observadas.',
+                    evidence,'goal-selection:'+command['id'])
+
+    def _start_planned(self,s,goal,*,mind_influenced=False,comparison=None):
         params=json.loads(goal['params'])
         self.projects.link(s,goal['id'],goal['kind'],params)
         hypothesis=str(uuid4())
@@ -750,7 +807,9 @@ class CognitiveEngine:
         self.m.db.execute("UPDATE Goals SET status='running' WHERE id=?",(goal['id'],))
         extra={k:params[k] for k in ('recipe','placement','shelter','mining','furnace','route','planting','tilling','storage','social') if k in params}
         command=self._command(s,exp,phase,**extra)
-        self.mind.record_selection(s,goal)
+        if phase=='mine':self.mining.intend(s,goal['id'],command)
+        self.mind.record_selection(s,goal,applied=mind_influenced)
+        self._record_goal_selection(s,goal,command,mind_influenced=mind_influenced,comparison=comparison)
         return command
 
     def _start_eat(self,s,food):
@@ -772,14 +831,19 @@ class CognitiveEngine:
         self.m.db.execute('INSERT INTO Experiments VALUES(:id,:world,:session,:hypothesis,:target,:phase,:status,:evidence_ids)',exp)
         self.m.db.execute('INSERT INTO ExperimentGoals VALUES(?,?)',(exp['id'],gid))
         self.m.db.execute("UPDATE Goals SET status='running' WHERE id=?",(gid,))
-        return self._command(s,exp,'eat',food=food)
+        command=self._command(s,exp,'eat',food=food)
+        self._record_goal_selection(s,goal,command)
+        return command
 
     def _start_pickup(self, s, item, priority, reason, category):
         data = item.model_dump(mode='json')
         target = dict(x=math.floor(item.x), y=math.floor(item.y), z=math.floor(item.z), id=item.item_id)
-        subject = 'pickup:' + data['entity_id'] + ':' + str(data['count'])
+        subject = 'pickup:' + s.dimension + ':' + data['entity_id']
+        params={'target': target, 'item': data}
+        acquisition=next((gid for gid,_,intent in self.mining.intents(s) if intent['item_id']==item.item_id),None)
+        if acquisition:params['acquisition_goal']=acquisition
         gid = self.goals.ensure(s, subject, 'Recolher ' + item.item_id,
-                                reason, priority, 'pickup', {'target': target, 'item': data},
+                                reason, priority, 'pickup', params,
                                 'pickup_item', category)
         if not gid:
             return None
@@ -797,7 +861,9 @@ class CognitiveEngine:
         self.m.db.execute('INSERT INTO Experiments VALUES(:id,:world,:session,:hypothesis,:target,:phase,:status,:evidence_ids)', exp)
         self.m.db.execute('INSERT INTO ExperimentGoals VALUES(?,?)', (exp['id'], gid))
         self.m.db.execute("UPDATE Goals SET status='running' WHERE id=?", (gid,))
-        return self._command(s, exp, 'pickup', item=data)
+        command=self._command(s, exp, 'pickup', item=data)
+        self._record_goal_selection(s,goal,command)
+        return command
 
     def _start_harvest(self, s, crop, priority, reason, category):
         target=crop.model_dump(exclude={'log','harvestable','lit'})
@@ -816,7 +882,9 @@ class CognitiveEngine:
         self.m.db.execute('INSERT INTO Experiments VALUES(:id,:world,:session,:hypothesis,:target,:phase,:status,:evidence_ids)',exp)
         self.m.db.execute('INSERT INTO ExperimentGoals VALUES(?,?)',(exp['id'],gid))
         self.m.db.execute("UPDATE Goals SET status='running' WHERE id=?",(gid,))
-        return self._command(s,exp,'approach')
+        command=self._command(s,exp,'approach')
+        self._record_goal_selection(s,goal,command)
+        return command
 
     def _start_sleep(self,s,bed,priority,reason,category):
         target=bed.model_dump(exclude={'log','harvestable','bed','lit'})
@@ -835,7 +903,9 @@ class CognitiveEngine:
         self.m.db.execute('INSERT INTO Experiments VALUES(:id,:world,:session,:hypothesis,:target,:phase,:status,:evidence_ids)',exp)
         self.m.db.execute('INSERT INTO ExperimentGoals VALUES(?,?)',(exp['id'],gid))
         self.m.db.execute("UPDATE Goals SET status='running' WHERE id=?",(gid,))
-        return self._command(s,exp,'approach')
+        command=self._command(s,exp,'approach')
+        self._record_goal_selection(s,goal,command)
+        return command
 
     def _safe_food(self, food, inventory):
         if not isinstance(food, dict) or food.get('id') not in inventory:
@@ -863,13 +933,35 @@ class CognitiveEngine:
         tables['mind']=self.mind.snapshot(world) if s else {}
         tables['mind']['context']=getattr(self.mind_context,'last_context',None) if s else None
         tables['mind']['context_error']=getattr(self.mind_context,'last_error',None)
-        tables['mind']['actions']=[dict(id=row['id'],action=json.loads(row['payload']).get('action'),status=row['status'])
-                                  for row in self.m.rows("SELECT id,payload,status FROM Commands WHERE world=? AND session=? AND status='sent' LIMIT 8",
-                                                         (world,str(s.session)))] if s else []
-        tables['mind']['results']=self.m.rows("SELECT id,type,description,timestamp FROM Events WHERE world=? AND verified=1 "
-                                             "AND type NOT IN ('question','goal','interest') ORDER BY rowid DESC LIMIT 12",(world,)) if s else []
+        actions=self.m.rows("SELECT c.id,c.payload,c.status,eg.goal_id,e.plan_id FROM Commands c "
+                            "JOIN ExperimentGoals eg ON eg.experiment=c.experiment "
+                            "LEFT JOIN MindEvaluations e ON e.goal_id=eg.goal_id AND e.world=c.world AND e.session=c.session "
+                            "AND e.kind='selection' AND e.outcome='influenced' "
+                            "WHERE c.world=? AND c.session=? ORDER BY c.rowid DESC LIMIT 8",
+                            (world,str(s.session))) if s else []
+        tables['mind']['actions']=[dict(id=row['id'],action=json.loads(row['payload']).get('action'),status=row['status'],
+                                        goal_id=row['goal_id'],plan_id=row['plan_id'],influenced=bool(row['plan_id'])) for row in actions]
+        tables['mind']['results']=self.m.rows("SELECT ev.id,ev.type,ev.description,ev.timestamp,me.plan_id,me.goal_id,"
+                                             "me.outcome,me.session FROM MindEvaluations me JOIN Events ev ON ev.id=me.event_id "
+                                             "AND ev.world=me.world AND ev.session=me.session AND ev.verified=1 "
+                                             "WHERE me.world=? AND me.session=? AND me.kind='outcome' ORDER BY me.created DESC LIMIT 12",
+                                             (world,str(s.session))) if s else []
+        tables['mind']['learning']={
+            'memory': self.m.rows("SELECT lm.id,lm.source_event,lm.theme,lm.summary FROM LifeMemories lm "
+                                  "JOIN Events ev ON ev.id=lm.source_event AND ev.world=lm.world AND ev.verified=1 "
+                                  "AND ev.description=lm.summary WHERE lm.world=? ORDER BY lm.rowid DESC LIMIT 1",(world,)),
+            'preference': self.m.rows("SELECT pu.source,pu.category,pu.subject,pu.old_value,pu.new_value "
+                                      "FROM PreferenceUpdates pu JOIN Events ev ON ev.id=pu.source AND ev.world=pu.world "
+                                      "AND ev.verified=1 WHERE pu.world=? ORDER BY pu.rowid DESC LIMIT 1",(world,))
+        } if s else {'memory':[],'preference':[]}
+        selection=self.m.rows("SELECT evidence,timestamp FROM Events WHERE world=? AND session=? "
+                              "AND type='goal_selected' ORDER BY rowid DESC LIMIT 1",
+                              (world,str(s.session))) if s else []
+        tables['goal_selection']=dict(json.loads(selection[0]['evidence']),
+                                      timestamp=selection[0]['timestamp']) if selection else None
         p = self.m.rows('SELECT values_json FROM Personality WHERE world=?', (world,)) if world else []
         return dict(connected=connected, observation=s.model_dump(mode='json') if s else None,
+                    needs=project_needs(s,self.motivation.safety_limits(world) if world else (8,6)),
                     state=self.state if connected else 'PAUSED', reason=self.reason if connected else 'Sem heartbeat do mod; controle físico desativado',
                     motivation=self.dominant, personality=json.loads(p[0]['values_json']) if p else PERSONALITY,
                     planning_cycles=self.planning_cycles, decision_interval=self.interval, auto_publish=False,

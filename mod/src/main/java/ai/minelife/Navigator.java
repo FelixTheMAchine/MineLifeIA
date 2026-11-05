@@ -17,6 +17,7 @@ final class Navigator {
     private final Deque<BlockPos> route = new ArrayDeque<>();
     private Vec3d lastPosition;
     private int stuckTicks;
+    private boolean pickupRoute;
 
     Navigator(MinecraftClient mc) { this.mc = mc; }
 
@@ -63,6 +64,7 @@ final class Navigator {
 
     boolean plan(BlockPos target, boolean collect, boolean exact) {
         route.clear(); stuckTicks = 0; lastPosition = null;
+        pickupRoute=exact && collect;
         BlockPos start = mc.player.getBlockPos();
         ArrayDeque<BlockPos> queue = new ArrayDeque<>();
         Map<BlockPos, BlockPos> parent = new HashMap<>();
@@ -72,7 +74,7 @@ final class Navigator {
             BlockPos p = queue.remove();
             boolean goal = exact ? p.equals(target) : collect ? Vec3d.ofBottomCenter(p).squaredDistanceTo(Vec3d.ofBottomCenter(target)) < 1.2
                                    : visibleFrom(Vec3d.ofBottomCenter(p).add(0, 1.62, 0), target);
-            if (goal) { end = p; break; }
+            if (goal && (!(exact && collect) || walkable(p))) { end = p; break; }
             for (Direction d : Direction.Type.HORIZONTAL) {
                 for (int dy : new int[]{0, 1, -1}) {
                     BlockPos next = p.offset(d).up(dy);
@@ -86,6 +88,9 @@ final class Navigator {
         }
         if (end == null) return false;
         while (!end.equals(start)) { route.addFirst(end); end = parent.get(end); }
+        // A drop may share the player's block while remaining outside pickup range.
+        // Preserve a real movement waypoint instead of treating an empty path as arrival.
+        if (exact && collect && route.isEmpty()) route.add(start);
         return true;
     }
 
@@ -120,7 +125,13 @@ final class Navigator {
         if (!walkable(next) || !doorwayTransition(mc.player.getBlockPos(),next)) { release(); return -1; }
         Vec3d pos = mc.player.getPos();
         Vec3d dest = Vec3d.ofBottomCenter(next);
-        if (Math.abs(pos.x - dest.x) < .24 && Math.abs(pos.z - dest.z) < .24 && Math.abs(pos.y - dest.y) < .6) {
+        // Revalidate the player's actual swept box, including an off-center start.
+        // Step-up/down routes retain the existing jump and headroom checks.
+        if (pickupRoute && next.getY()==mc.player.getBlockPos().getY()
+                && !mc.world.isSpaceEmpty(mc.player, pickupSweep(mc.player.getBoundingBox(),pos,next))) {
+            release(); return -1;
+        }
+        if (waypointReached(pos,next)) {
             route.remove(); release(); return route.isEmpty() ? 1 : 0;
         }
         if (lastPosition != null && pos.squaredDistanceTo(lastPosition) < .0001) stuckTicks++; else stuckTicks = 0;
@@ -134,6 +145,16 @@ final class Navigator {
         mc.options.jumpKey.setPressed(next.getY() > pos.y + .45 && mc.player.isOnGround());
         mc.options.sprintKey.setPressed(false);
         return 0;
+    }
+
+    static boolean waypointReached(Vec3d position, BlockPos waypoint) {
+        Vec3d center=Vec3d.ofBottomCenter(waypoint);
+        return Math.abs(position.x-center.x)<.24 && Math.abs(position.z-center.z)<.24 && Math.abs(position.y-center.y)<.6;
+    }
+
+    static net.minecraft.util.math.Box pickupSweep(net.minecraft.util.math.Box player, Vec3d position, BlockPos waypoint) {
+        Vec3d center=Vec3d.ofBottomCenter(waypoint);
+        return player.stretch(new Vec3d(center.x-position.x,0,center.z-position.z));
     }
 
     void release() {

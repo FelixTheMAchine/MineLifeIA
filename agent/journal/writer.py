@@ -211,7 +211,7 @@ class JournalWriter:
         if found:
             self.export_entry(found[0])
             return found[0]
-        events = self.memory.rows("SELECT * FROM Events WHERE world=? AND day=? AND verified=1 AND type NOT IN ('construction_step','shelter_inspected','furnace_inspected','furnace_loaded') "
+        events = self.memory.rows("SELECT * FROM Events WHERE world=? AND day=? AND verified=1 AND type NOT IN ('construction_step','shelter_inspected','furnace_inspected','furnace_loaded','goal_selected') "
                                   + ('AND id=? ' if event_id else '') + 'ORDER BY timestamp,id',
                                   (world, day, event_id) if event_id else (world, day))
         if not events:

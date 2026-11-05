@@ -1,5 +1,6 @@
 """Surface resource demand; offered tools/targets come from the client, outcomes need evidence."""
 import math
+import json
 from agent.crafting import has_tool
 
 YIELDS = {'minecraft:stone':'minecraft:cobblestone', 'minecraft:cobblestone':'minecraft:cobblestone',
@@ -22,6 +23,64 @@ def mining_evidence(offer, ev):
 class MiningPlanner:
     def __init__(self,memory,crafting):
         self.m,self.crafting=memory,crafting
+
+    def intents(self,s):
+        rows=self.m.rows("SELECT goal_id,params FROM GoalPlans WHERE world=? AND kind='mine' ORDER BY rowid DESC LIMIT 64",(s.world,))
+        return [(r['goal_id'],p,p['acquisition']) for r in rows
+                if (p:=json.loads(r['params'])).get('acquisition',{}).get('status')=='pending'
+                and p['acquisition'].get('dimension')==s.dimension]
+
+    def save_intent(self,gid,params):
+        self.m.db.execute('UPDATE GoalPlans SET params=? WHERE goal_id=?',(json.dumps(params),gid))
+
+    def intend(self,s,gid,cmd,verified=False):
+        """Persist demand before acting; removal and acquisition remain separate facts."""
+        rows=self.m.rows('SELECT params FROM GoalPlans WHERE goal_id=?',(gid,))
+        if not rows:return
+        params=json.loads(rows[0]['params']);block=cmd['target']['id']
+        output=YIELDS.get(block,block if block.endswith('_log') else '')
+        if not output:return
+        params['acquisition']=dict(status='pending',item_id=output,dimension=s.dimension,
+                                   removal_command=cmd['id'],removal_session=str(s.session),
+                                   removal_verified=verified,waits=0,attempts=0)
+        self.save_intent(gid,params)
+
+    def pickup_outcome(self,s,gid,cmd,success=False,cancelled=False,reason=''):
+        rows=self.m.rows('SELECT params FROM GoalPlans WHERE goal_id=?',(gid,))
+        if not rows:return
+        parent=json.loads(rows[0]['params']).get('acquisition_goal')
+        for intent_id,params,intent in self.intents(s):
+            if parent!=intent_id:continue
+            if success:
+                intent.update(status='acquired',pickup_command=cmd['id'],pickup_session=str(s.session),entity_id=cmd['item']['entity_id'])
+            elif not cancelled:
+                intent['attempts']+=1
+                intent['last_error']=reason
+                if intent['attempts']>=2 or reason=='inventory_full':intent['status']='exhausted'
+            self.save_intent(intent_id,params)
+
+    def acquisition_pending(self,s):
+        """Hold exploration briefly for asynchronous drops and bounded pickup retries."""
+        pending=False
+        for gid,params,intent in self.intents(s):
+            # Failed or cancelled removal never establishes an asynchronous drop.
+            # In-flight commands are handled before this planning stage.
+            if not intent.get('removal_verified'):continue
+            intent['checks']=intent.get('checks',0)+1
+            visible='pickup' in s.capabilities and any(i.item_id==intent['item_id'] and self.available(s,i) for i in s.items)
+            if not visible:
+                intent['waits']+=1
+                if intent['waits']>3:intent['status']='unobserved'
+            if intent['checks']>24:intent['status']='expired'
+            self.save_intent(gid,params)
+            pending |= intent['status']=='pending'
+        return pending
+
+    def available(self,s,item):
+        if math.dist((item.x,item.y,item.z),(s.player.x,s.player.y,s.player.z))>10:return False
+        rows=self.m.rows('SELECT p.attempts,g.status FROM GoalPlans p JOIN Goals g ON p.goal_id=g.id WHERE p.world=? AND p.subject=?',
+                         (s.world,'pickup:'+s.dimension+':'+str(item.entity_id)))
+        return not rows or rows[0]['attempts']<2 and rows[0]['status']!='completed'
 
     def demand(self,s,item):
         inv=s.player.inventory
@@ -58,7 +117,9 @@ class MiningPlanner:
 
     def pending_drop(self,s):
         # Pick up useful visible drops before digging another block. Disappearance alone is never proof.
+        if 'pickup' not in s.capabilities or s.player.danger or s.player.food<=8 or s.time>=12000:return None
+        wanted={intent['item_id'] for _,_,intent in self.intents(s)}
         items=[i for i in s.items if (i.item_id in YIELDS.values() or i.item_id.endswith('_log'))
-               and self.demand(s,i.item_id)>s.player.inventory.get(i.item_id,0)
-               and math.dist((i.x,i.y,i.z),(s.player.x,s.player.y,s.player.z))<=10]
+               and (i.item_id in wanted or self.demand(s,i.item_id)>s.player.inventory.get(i.item_id,0))
+               and self.available(s,i)]
         return min(items,key=lambda i:math.dist((i.x,i.y,i.z),(s.player.x,s.player.y,s.player.z)),default=None)

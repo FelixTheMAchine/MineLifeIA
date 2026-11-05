@@ -51,7 +51,7 @@ class Generator:
         return [{'role': 'user', 'content': json.dumps(context)}]
 
     @staticmethod
-    def schema():
+    def schema(context=None):
         return {'type': 'object'}
 
     @staticmethod
@@ -225,10 +225,12 @@ class SchedulerTest(unittest.IsolatedAsyncioTestCase):
         scheduler.schedule({**self.context(), 'expires_at': time.time() - 1})
         await scheduler.task
         self.assertEqual(self.provider.requests, [])
+        self.assertEqual(scheduler.snapshot()['diagnostic']['category'], 'stale_context')
         with patch.object(Generator, 'parse', side_effect=ValueError('schema_mismatch')):
             scheduler.schedule(self.context('two'))
             await scheduler.task
         self.assertEqual(scheduler.status, 'fallback')
+        self.assertEqual(scheduler.snapshot()['diagnostic'], {'category': 'internal_error', 'fields': []})
         self.assertEqual(len(self.provider.requests), 1)
         self.assertIsNone(scheduler.take_result())
         self.assertFalse(scheduler.schedule(self.context('three')))
@@ -277,3 +279,4 @@ class SchedulerTest(unittest.IsolatedAsyncioTestCase):
         await scheduler.task
         self.assertIsNone(scheduler.take_result())
         self.assertEqual(scheduler.status, 'stale')
+        self.assertEqual(scheduler.snapshot()['diagnostic']['category'], 'stale_context')

@@ -57,6 +57,7 @@ public final class MineLifeClient implements ClientModInitializer {
     private String token, session, world, dimension;
     private boolean active, armed;
     private final ControlGate gate = new ControlGate();
+    private final PhysiologyAdapter physiology = new PhysiologyAdapter();
     private boolean handshaken, handshakeRequest;
     private int failures;
     private long nextPoll, sensorTick = -100;
@@ -199,6 +200,7 @@ public final class MineLifeClient implements ClientModInitializer {
     }
 
     private void resetSession() {
+        physiology.reset();
         if (request != null) request.cancel(true);
         request = null; session = UUID.randomUUID().toString(); seq = 0; results.clear(); seenCommands.clear(); lastReply = 0;
         handshaken = false; sensorTick = -100; nextPoll = 0;
@@ -259,6 +261,8 @@ public final class MineLifeClient implements ClientModInitializer {
                 for(String feature:List.of("agriculture-v1","storage-v1","social-v1"))
                     if(!reply.getAsJsonArray("features").contains(new JsonPrimitive(feature)))
                         throw new IllegalStateException("backend_update_required_mining_cooking_v1");
+                if(!reply.getAsJsonArray("features").contains(new JsonPrimitive("physiology-v1")))
+                    throw new IllegalStateException("backend_update_required_physiology_v1");
                 handshaken = true; lastReply = System.nanoTime(); failures = 0; return;
             }
             if (!reply.get("session").getAsString().equals(session) || reply.get("seq").getAsLong() != seq) throw new IllegalStateException("stale_reply");
@@ -280,7 +284,9 @@ public final class MineLifeClient implements ClientModInitializer {
             if (active && command == null && reply.has("state")) status = reply.get("state").getAsString();
         } catch (Exception e) {
             request = null;
-            stop("backend_update_required_mining_cooking_v1".equals(e.getMessage())
+            stop("backend_update_required_physiology_v1".equals(e.getMessage())
+                    ? "Atualize/reinicie o backend · fisiologia v1"
+                    : "backend_update_required_mining_cooking_v1".equals(e.getMessage())
                     ? "Atualize/reinicie o backend · mineração/cozinha v1" : "Backend desconectado · F8", true);
             // A nova sessão impede que comandos antigos sejam reutilizados após reconexão.
             session = UUID.randomUUID().toString(); seq = 0; seenCommands.clear(); results.clear(); lastReply = 0;
@@ -299,6 +305,8 @@ public final class MineLifeClient implements ClientModInitializer {
         o.addProperty("time", Math.floorMod(mc.world.getTimeOfDay(), 24000));
         o.addProperty("active", active); o.addProperty("armed", armed);
         o.addProperty("control_state", gate.state); o.addProperty("control_epoch", gate.epoch);
+        JsonObject physiological=physiology.observation(mc,session,world,dimension,gate.epoch);
+        if(physiological!=null) o.add("physiology",physiological);
         o.add("capabilities", JSON.toJsonTree(List.of("approach","break","collect","observe","explore","craft","eat","pickup","harvest","sleep","place","craft_table",
                 "build_shelter","inspect_shelter","enter_shelter","leave_shelter","mine","furnace_load","furnace_inspect","furnace_take","plant","till","storage_inspect","storage_deposit","storage_withdraw","social_observe","social_contact")));
         o.addProperty("biome", mc.world.getBiome(mc.player.getBlockPos()).getKey().map(k -> k.getValue().toString()).orElse("unknown"));

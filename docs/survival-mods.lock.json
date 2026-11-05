@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "target": {
+    "minecraft": "1.21.1",
+    "loader": "fabric",
+    "fabric_loader": "0.20.1",
+    "java": 21
+  },
+  "lock_source": "Modrinth v2 version metadata cached in data/phase04-research/*.json; file hashes were independently recomputed from the cached artifacts.",
+  "artifacts": [
+    {
+      "project_id": "qWDh3G0p",
+      "version_id": "Ls1nAcYc",
+      "version_number": "1.4.2+1.21.1",
+      "filename": "dehydration-1.4.2.jar",
+      "url": "https://cdn.modrinth.com/data/qWDh3G0p/versions/Ls1nAcYc/dehydration-1.4.2.jar",
+      "size": 388010,
+      "sha512": "8acfb9c69051f6f330bdd8f0dba53ff2841c852e8e62370ec0b9eeb78f99f0b3ea99b17122daaecf3c6f26450a383deb1fc2775f823402bd8b09ac2fbfb990a5",
+      "sha1": "a907a3f5f3f7074ec9131c7a711b66a4934b6a59",
+      "mod_id": "dehydration",
+      "environment": "client_and_server",
+      "depends": {
+        "java": ">=21",
+        "minecraft": ">=1.21.1",
+        "fabric-api": ">=0.116.17+1.21.1",
+        "fabricloader": ">=0.19.5",
+        "cloth-config2": ">=15.0.140"
+      },
+      "provides": []
+    },
+    {
+      "project_id": "TggYmc6t",
+      "version_id": "l7EZhw1K",
+      "version_number": "2.2.0+1.21.1",
+      "filename": "environmentz-2.2.0.jar",
+      "url": "https://cdn.modrinth.com/data/TggYmc6t/versions/l7EZhw1K/environmentz-2.2.0.jar",
+      "size": 283991,
+      "sha512": "3952d5f26f3fb549099a5133de488ee9ab1d51d8725ddb8a1974e4a2e673e64db771e46aa30caefaa3d9951d7bc5931349304ce8ef28413a4353a24ddcddab74",
+      "sha1": "1ece2f52154c86dca6e6eb8c5b08bec7914bbd99",
+      "mod_id": "environmentz",
+      "environment": "client_and_server",
+      "depends": {
+        "java": ">=21",
+        "minecraft": ">=1.21.1",
+        "fabric-api": ">=0.116.17+1.21.1",
+        "fabricloader": ">=0.19.5",
+        "cloth-config2": ">=15.0.140",
+        "satin": ">=2.0.0"
+      },
+      "provides": [],
+      "suggests": {
+        "dehydration": "*"
+      }
+    },
+    {
+      "project_id": "P7dR8mSH",
+      "version_id": "Mys3P7lK",
+      "version_number": "0.116.17+1.21.1",
+      "filename": "fabric-api-0.116.17+1.21.1.jar",
+      "url": "https://cdn.modrinth.com/data/P7dR8mSH/versions/Mys3P7lK/fabric-api-0.116.17%2B1.21.1.jar",
+      "size": 2452735,
+      "sha512": "98c478217da19181f0e4df3ea6c2da6bdbda271c7544a4aea048513a49b444f1ff5b71dc0df6303017c48e8ff69b7bb6af6179bdf0d0e09ab3c1ee08411857a8",
+      "sha1": "810b2b0195371a012906241d8b85a32a1d6de53c",
+      "mod_id": "fabric-api",
+      "environment": "client_and_server",
+      "depends": {
+        "fabricloader": ">=0.15.11",
+        "java": ">=21",
+        "minecraft": ">=1.21- <1.21.2-"
+      },
+      "provides": ["fabric"],
+      "nested_jars": "The Fabric API jar metadata bundles its component modules under META-INF/jars/."
+    },
+    {
+      "project_id": "9s6osm5g",
+      "version_id": "HpMb5wGb",
+      "version_number": "15.0.140+fabric",
+      "filename": "cloth-config-15.0.140-fabric.jar",
+      "url": "https://cdn.modrinth.com/data/9s6osm5g/versions/HpMb5wGb/cloth-config-15.0.140-fabric.jar",
+      "size": 1157166,
+      "sha512": "1b3f5db4fc1d481704053db9837d530919374bf7518d7cede607360f0348c04fc6347a3a72ccfef355559e1f4aef0b650cd58e5ee79c73b12ff0fc2746797a00",
+      "sha1": "5d82342a2df53fd6df712bfdd583a811572918a4",
+      "mod_id": "cloth-config",
+      "environment": "client_or_server_prefers_both",
+      "depends": {
+        "fabricloader": ">=0.14.0",
+        "minecraft": ">=1.21-"
+      },
+      "provides": ["cloth-config2"],
+      "nested_jars": ["META-INF/jars/basic-math-0.6.1.jar"]
+    },
+    {
+      "project_id": "fRbqPLg4",
+      "version_id": "Tq9qJzQz",
+      "version_number": "2.0.0",
+      "filename": "satin-2.0.0.jar",
+      "url": "https://cdn.modrinth.com/data/fRbqPLg4/versions/Tq9qJzQz/satin-2.0.0.jar",
+      "size": 102437,
+      "sha512": "097f1826dc31df7adfe4d15318f905068f1cd1c3895c530363f924d524f6b1f587ef721bd4a4b857357f4686fe2f95599eef1b6cee37aff52f31198f3cf0272b",
+      "sha1": "1d1cdadf7554971831bfcd48a5d0baa39d4beef4",
+      "mod_id": "satin",
+      "environment": "client_only",
+      "depends": {
+        "fabricloader": ">=0.11.3",
+        "fabric-api-base": "*",
+        "fabric-resource-loader-v0": "*",
+        "fabric-rendering-v1": ">=2.1.0",
+        "minecraft": ">=1.20.3",
+        "java": ">=16"
+      },
+      "provides": []
+    },
+    {
+      "project_id": "qWDh3G0p",
+      "version_id": "Ls1nAcYc",
+      "version_number": "1.4.2+1.21.1",
+      "filename": "dehydration-1.4.2-sources.jar",
+      "url": "https://cdn.modrinth.com/data/qWDh3G0p/versions/Ls1nAcYc/dehydration-1.4.2-sources.jar",
+      "size": 280614,
+      "sha512": "a1cb2707c6df9907206c86f87f0aca0e7869c62cfe0bbc250eee14927bcdeabda58e137c86074918199dbeeacb7f2b62ef63017b97b2ac4a95d933c39e5ef95a",
+      "sha1": "a26266b425f5e4994ab4423cdda3883219ff4b2f",
+      "artifact_kind": "sources",
+      "for_version_id": "Ls1nAcYc"
+    },
+    {
+      "project_id": "TggYmc6t",
+      "version_id": "l7EZhw1K",
+      "version_number": "2.2.0+1.21.1",
+      "filename": "environmentz-2.2.0-sources.jar",
+      "url": "https://cdn.modrinth.com/data/TggYmc6t/versions/l7EZhw1K/environmentz-2.2.0-sources.jar",
+      "size": 174280,
+      "sha512": "572da88d408b0dd78ff1e0ff5dc867ef1cd0c982c5e2a324c34cd69f8b745139395f2324eb99e952607a9c25827b02bb96ec701c7421632a94f30ce6758fe9b9",
+      "sha1": "51077480220154597586260464e693cef781b0fb",
+      "artifact_kind": "sources",
+      "for_version_id": "l7EZhw1K"
+    }
+  ]
+}

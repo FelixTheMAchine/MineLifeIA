@@ -79,4 +79,6 @@ Testes de contrato executam HttpClient Java contra FastAPI temporária em socket
 
 O modelo de confiança é um computador local; outro processo que já possua o token pode usar a API local. Não encaminhe a porta, não publique tokens e não use painel em origem remota.
 
+Se for preciso renovar um token exposto, pare o backend e feche o Minecraft. Guarde uma cópia privada de `config/local.json`, gere um token novo localmente e atualize apenas esse arquivo, sem imprimir o valor em logs. Depois do build, execute `scripts/Install-Mod.ps1` para o mundo e a instância corretos: o instalador verifica o backup do save e copia o token local para `config/minelife-ai.json` do mod. Só então reinicie backend e jogo e confira o handshake autenticado. Se a comunicação falhar, pare ambos e restaure a configuração local e a configuração do mod a partir dos backups antes de tentar novamente. Nunca versionar ou publicar essas cópias.
+
 APIs consultadas para esta extensão: [RecipeMatcher, Yarn 1.21.1+build.3](https://maven.fabricmc.net/docs/yarn-1.21.1+build.3/net/minecraft/recipe/RecipeMatcher.html) e [CraftingScreenHandler](https://maven.fabricmc.net/docs/yarn-1.21.1+build.3/net/minecraft/screen/CraftingScreenHandler.html). A compilação usa essas mappings; a consulta/compilação não substitui validação do comportamento em jogo.

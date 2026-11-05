@@ -35,3 +35,17 @@ tasks.register('verifyTools', JavaExec) {
     mainClass = 'ai.minelife.ToolSelectionTest'
 }
 check.dependsOn verifyTools
+
+tasks.register('verifyPickupNavigation', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'ai.minelife.PickupNavigationTest'
+}
+check.dependsOn verifyPickupNavigation
+
+tasks.register('verifyPhysiology', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'ai.minelife.PhysiologyCacheTest'
+}
+check.dependsOn verifyPhysiology

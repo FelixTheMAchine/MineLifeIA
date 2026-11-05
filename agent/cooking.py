@@ -54,6 +54,18 @@ class CookingManager:
         self.checked.pop(job['id'],None)
         self.m.db.execute('UPDATE FurnaceJobs SET last_session=NULL,updated=? WHERE id=?',(now(),job['id']))
 
+    def _resume_budget(self,s,job):
+        rows=self.m.rows("SELECT d.context FROM ProjectDecisions d JOIN LongProjects p ON p.id=d.project "
+                         "WHERE p.world=? AND p.dimension=? AND p.source_kind='furnace' AND p.source_id=? "
+                         "AND d.kind='resumed' AND json_type(d.context,'$.furnace_resume')='object' "
+                         'ORDER BY d.rowid DESC LIMIT 1',(s.world,s.dimension,job['id']))
+        if not rows:return None
+        marker=json.loads(rows[0]['context'])['furnace_resume']
+        if (not isinstance(marker.get('token'),str) or type(marker.get('revision')) is not int
+                or not 0<=marker['revision']<=job['revision'] or not isinstance(marker.get('attempts'),dict)):
+            return None
+        return marker
+
     def propose(self,s):
         if not ACTIONS<=set(s.capabilities) or s.player.danger:return None
         job=self.current(s)
@@ -106,18 +118,27 @@ class CookingManager:
             else:
                 self.reason='Fornalha processando; reavaliar em cinco segundos sem manter uma ação física presa.';return None
         params=dict(job_id=job['id'],recipe=job['recipe'],recover=job['status']=='recoverable')
-        failures=self.m.rows('SELECT COALESCE(sum(attempts),0) n FROM GoalPlans WHERE world=? AND subject LIKE ?',
-                             (s.world,f"furnace:{job['id']}:{action}:%"))[0]['n']
-        if failures>=2 or job['revision']>=64:
+        failures=self.m.rows('SELECT COALESCE(sum(attempts),0) n FROM GoalPlans WHERE world=? AND kind=? '
+                             "AND json_extract(params,'$.furnace.job_id')=?",(s.world,action,job['id']))[0]['n']
+        resume=self._resume_budget(s,job)
+        baseline=resume['attempts'].get(action,0) if resume else 0
+        failures=max(0,failures-baseline) if type(baseline) is int and baseline>=0 else failures
+        revisions=job['revision']-(resume['revision'] if resume else 0)
+        if failures>=2 or revisions>=64:
             self.m.db.execute("UPDATE FurnaceJobs SET status='conflict',updated=? WHERE id=?",(now(),job['id']))
             self.reason='Preparo suspenso após falhas ou ausência prolongada de progresso; preservar conteúdo da estação.'
             return None
         self.reason={'furnace_inspect':'Revalidar o conteúdo real antes de continuar o preparo.',
                      'furnace_load':'Transferir uma unidade de ingrediente e combustível pela interface nativa.',
                      'furnace_take':'Recolher o resultado observado; em uma interrupção, recuperar recursos compatíveis.'}[action]
-        return dict(subject=f"furnace:{job['id']}:{action}:{job['revision']}:{s.session}",description=self.reason,
+        # The token distinguishes an explicitly reopened budget from exhausted
+        # goals while leaving old attempts and physical command payloads intact.
+        goal_params=dict(target=target,furnace=params)
+        if resume:goal_params['project_resume']=resume['token']
+        token=':'+resume['token'] if resume else ''
+        return dict(subject=f"furnace:{job['id']}:{action}:{job['revision']}:{s.session}{token}",description=self.reason,
                     reason='Estado persistente e inspeção da estação; nenhuma refeição presumida.',priority=235,
-                    kind=action,skill=action,params=dict(target=target,furnace=params))
+                    kind=action,skill=action,params=goal_params)
 
     def validate(self,s,cmd,ev):
         job=self.current(s);request=cmd['furnace']

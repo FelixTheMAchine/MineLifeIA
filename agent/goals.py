@@ -11,6 +11,19 @@ class GoalManager:
         self.max_questions = max_questions
         self.cooldown = cooldown
 
+    def begin_cycle(self, world):
+        # Retain plans and acquisition parameters while freeing slots for this
+        # observation's executable proposals. Running goals are never evicted.
+        self.m.db.execute("UPDATE Goals SET status='deferred' WHERE world=? AND status='pending'", (world,))
+
+    @staticmethod
+    def _equivalent(kind, params):
+        if kind == 'explore' and 'target' in params and not params.get('route'):
+            from agent.exploration import region
+            t = params['target']
+            return region(t['x']+.5, t['y'], t['z']+.5)
+        return json.dumps(params, sort_keys=True)
+
     def question(self, s, subject, text, source=None):
         rows = self.m.rows('SELECT id FROM Questions WHERE world=? AND subject=?', (s.world, subject))
         if rows:
@@ -27,6 +40,13 @@ class GoalManager:
     def ensure(self, s, subject, description, reason, priority, kind, params, skill, category='SHORT_TERM', blocked=False):
         existing = self.m.rows('SELECT p.*,g.status FROM GoalPlans p JOIN Goals g ON g.id=p.goal_id '
                                'WHERE p.world=? AND p.subject=?', (s.world, subject))
+        if not existing:
+            alternatives = self.m.rows('SELECT p.*,g.status FROM GoalPlans p JOIN Goals g ON g.id=p.goal_id '
+                                       "WHERE p.world=? AND p.kind=? AND p.skill=? AND p.attempts<2 "
+                                       "AND g.status IN ('pending','running','suspended','deferred')", (s.world, kind, skill))
+            existing = [r for r in alternatives
+                        if self._equivalent(kind, json.loads(r['params'])) == self._equivalent(kind, params)
+                        and (kind != 'explore' or r['subject'].startswith('explore:'+s.dimension+':'))][:1]
         if existing:
             row = existing[0]
             if not blocked and row['status'] in ('pending', 'suspended', 'deferred', 'blocked') and row['attempts'] < 2 and row['cooldown'] <= time.time():
@@ -56,13 +76,13 @@ class GoalManager:
         return self.m.rows('SELECT g.*,p.subject,p.category,p.kind,p.params,p.skill,p.attempts,p.cooldown,p.last_error '
                            "FROM Goals g JOIN GoalPlans p ON p.goal_id=g.id WHERE g.world=? AND g.status IN ('pending','running','suspended','blocked') ORDER BY g.priority DESC,g.rowid LIMIT 64", (world,))
 
-    def failure(self, gid, reason, cancelled=False):
+    def failure(self, gid, reason, cancelled=False, *, uncertain=False):
         rows = self.m.rows('SELECT * FROM GoalPlans WHERE goal_id=?', (gid,))
         if not rows:
             return
         row = rows[0]
-        attempts = row['attempts'] + int(not cancelled)
-        status = 'abandoned' if attempts >= 2 else 'suspended'
+        attempts = row['attempts'] + int(not cancelled and not uncertain)
+        status = 'abandoned' if attempts >= 2 and not uncertain else 'suspended'
         self.m.db.execute('UPDATE GoalPlans SET attempts=?,cooldown=?,last_error=? WHERE goal_id=?',
                           (attempts, time.time() + (2 if cancelled else self.cooldown), reason, gid))
         self.m.db.execute('UPDATE Goals SET status=? WHERE id=?', (status, gid))

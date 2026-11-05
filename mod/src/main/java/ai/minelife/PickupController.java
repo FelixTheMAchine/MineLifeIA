@@ -17,6 +17,8 @@ final class PickupController {
     private final Navigator navigator;
     private UUID entityId;
     private String itemId;
+    private String navigationError;
+    private BlockPos destination;
     private int initialCount, ticks, sampleCooldown;
     private CompletableFuture<JsonObject> before, after;
 
@@ -33,7 +35,8 @@ final class PickupController {
                 || !Registries.ITEM.getId(drop.getStack().getItem()).toString().equals(itemId)) return "item_entity_changed";
         if (!canAccept(drop.getStack())) return "inventory_full";
         before=snapshot();
-        if (!navigator.plan(target,true)) return "no_safe_path";
+        destination=drop.getBlockPos();
+        if (!navigator.plan(destination,true,true)) return "no_safe_path";
         return null;
     }
 
@@ -42,21 +45,52 @@ final class PickupController {
         if (++ticks>360) return error("pickup_timeout");
         if (before==null || !before.isDone()) return null;
         if (before.isCompletedExceptionally()) return error("server_evidence_unavailable_before_pickup");
+        if (before.join().get("entity_changed").getAsBoolean()) return error("item_entity_changed");
         if (!before.join().get("entity_present").getAsBoolean()) return error("item_missing_before_pickup");
-        int path=navigator.tick();
-        if (path<0) return error("path_obstructed");
+        var live=mc.world.getEntitiesByClass(ItemEntity.class,mc.player.getBoundingBox().expand(20),e->e.getUuid().equals(entityId))
+                .stream().findFirst().orElse(null);
+        boolean inventoryFull=live!=null && !canAccept(live.getStack());
+        if(live!=null){
+            if(!Registries.ITEM.getId(live.getStack().getItem()).toString().equals(itemId))return error("item_entity_changed");
+            if(navigationError==null && !inventoryFull && ticks%20==0 && !live.getBlockPos().equals(destination)){
+                destination=live.getBlockPos();
+                if(!navigator.plan(destination,true,true))navigationError="no_safe_path";
+            }
+        }
+        // A partial pickup can fill the inventory while the remainder is still alive.
+        // A later obstruction can also follow an already completed pickup.
+        // Stop moving, then let server evidence establish that pickup before failing.
+        if(inventoryFull || navigationError!=null)navigator.release();
+        int path=navigationError!=null?-1:inventoryFull?1:navigator.tick();
+        if (path<0) {
+            navigator.release();
+            if(navigationError==null)navigationError="path_obstructed";
+        }
         if (++sampleCooldown<5) return null;
         sampleCooldown=0;
         if (after==null) after=snapshot();
         if (!after.isDone()) return null;
         if (after.isCompletedExceptionally()) return error("server_evidence_unavailable_after_pickup");
-        JsonObject prior=before.join(), current=after.join();
+        JsonObject outcome=evaluateSnapshot(before.join(),after.join(),itemId,entityId,inventoryFull,navigationError);
+        if(outcome!=null)return outcome;
+        if (path>0 && ticks>160) return error("item_not_collected");
+        after=null;
+        return null;
+    }
+
+    static JsonObject evaluateSnapshot(JsonObject prior,JsonObject current,String itemId,UUID entityId,boolean inventoryFull) {
+        return evaluateSnapshot(prior,current,itemId,entityId,inventoryFull,null);
+    }
+
+    static JsonObject evaluateSnapshot(JsonObject prior,JsonObject current,String itemId,UUID entityId,boolean inventoryFull,String navigationError) {
+        if(current.get("entity_changed").getAsBoolean())return error("item_entity_changed");
         int oldCount=count(prior.getAsJsonObject("inventory"),itemId);
         int newCount=count(current.getAsJsonObject("inventory"),itemId);
         int serverCountBefore=prior.get("entity_count").getAsInt();
         boolean entityReduced=!current.get("entity_present").getAsBoolean()
                 || current.get("entity_count").getAsInt()<serverCountBefore;
-        if (newCount>oldCount && entityReduced) {
+        int serverCountAfter=current.get("entity_count").getAsInt();
+        if (newCount>oldCount && entityReduced && newCount-oldCount<=serverCountBefore-serverCountAfter) {
             current.add("inventory_before",prior.get("inventory").deepCopy());
             current.add("inventory_after",current.get("inventory").deepCopy());
             current.addProperty("item_id",itemId);current.addProperty("item_delta",newCount-oldCount);
@@ -64,12 +98,12 @@ final class PickupController {
             current.addProperty("entity_count_after",current.get("entity_count").getAsInt());
             current.addProperty("entity_present_after",current.get("entity_present").getAsBoolean());
             current.addProperty("entity_present_before",prior.get("entity_present").getAsBoolean());
-            current.remove("inventory");current.remove("entity_present");current.remove("entity_count");
+            current.remove("inventory");current.remove("entity_present");current.remove("entity_count");current.remove("entity_changed");
             return current;
         }
         if (!current.get("entity_present").getAsBoolean()) return error("item_disappeared_without_inventory_increase");
-        if (path>0 && ticks>160) return error("item_not_collected");
-        after=null;
+        if(inventoryFull)return error("inventory_full");
+        if(navigationError!=null)return error(navigationError);
         return null;
     }
 
@@ -85,6 +119,8 @@ final class PickupController {
                 JsonObject ev=new JsonObject();ev.addProperty("server_verified",true);
                 ev.add("inventory",inventory(player));
                 var found=world.getEntity(item);
+                ev.addProperty("entity_changed",found!=null && (!(found instanceof ItemEntity drop)
+                        || !Registries.ITEM.getId(drop.getStack().getItem()).toString().equals(capturedItemId)));
                 ev.addProperty("entity_present",found instanceof ItemEntity drop && !drop.getStack().isEmpty()
                         && Registries.ITEM.getId(drop.getStack().getItem()).toString().equals(capturedItemId));
                 int count=found instanceof ItemEntity drop && Registries.ITEM.getId(drop.getStack().getItem()).toString().equals(capturedItemId)
@@ -113,5 +149,5 @@ final class PickupController {
     }
     private static int count(JsonObject inventory,String id){return inventory.has(id)?inventory.get(id).getAsInt():0;}
     private static JsonObject error(String reason){JsonObject value=new JsonObject();value.addProperty("error",reason);return value;}
-    void cancel(){navigator.release();entityId=null;itemId=null;initialCount=ticks=sampleCooldown=0;before=after=null;}
+    void cancel(){navigator.release();entityId=null;itemId=navigationError=null;destination=null;initialCount=ticks=sampleCooldown=0;before=after=null;}
 }

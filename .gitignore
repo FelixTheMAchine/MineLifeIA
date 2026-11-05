@@ -6,9 +6,11 @@ __pycache__/
 *.pyc
 data/
 config/local.json
+config/local.json.*
 dist/
 .tools/
 *.log
+.tmp-*.json
 .env
 .env.*
 !.env.example

@@ -4,12 +4,13 @@ The adapter supplies synthetic server proofs. It never launches Minecraft and
 does not establish survival, path safety, or food production in the real game.
 """
 import copy
+import json
 import unittest
 from uuid import uuid4
 import test_pipeline as base
 from test_storage import snapshot, stack, content
 from agent.engine import CognitiveEngine
-from agent.memory import MemoryManager
+from agent.memory import MemoryManager, now
 from agent.journal.writer import JournalWriter
 from agent.storage import ACTIONS, expected_transfer
 from life_metrics import LifeMetrics, world_fingerprint
@@ -135,6 +136,7 @@ class LongLifeTest(unittest.TestCase):
         metrics={world:LifeMetrics(self.m,world) for world in (base.WORLD,other)}
         position=dict(x=0.,y=64.,z=0.);pending=[];executed=set();last_result=None
         isolated=None;clock=[100.]
+        quiet={world:0 for world in metrics}
         self.engine.clock=lambda:clock[0]
         for cycle in range(240):
             clock[0]+=4
@@ -158,6 +160,8 @@ class LongLifeTest(unittest.TestCase):
                                frontiers=[dict(x=int(position['x'])-12,y=64,z=0,safe=True,path_length=12)],
                                player=dict(**position,health=20,food=20,danger=danger,inventory={}))
             pending=[];cmd=response['command'];metrics[world].observe(response)
+            if active and not danger and cmd is None and 'Baixa atividade' in self.engine.reason:
+                quiet[world]+=1
             if not active or danger:self.assertIsNone(cmd)
             if danger:self.assertEqual(response['control'],'pause')
             if cmd:
@@ -179,7 +183,10 @@ class LongLifeTest(unittest.TestCase):
         for world,measurement in metrics.items():
             report=measurement.report()
             self.assertEqual(report['cycles'],120)
-            self.assertGreater(report['progress_cycles'],10,report)
+            # Pure travel without discoveries permits deliberate quiet periods.
+            # Keep the retransmission, danger and isolation invariants below.
+            self.assertGreater(report['progress_cycles'],0,report)
+            self.assertGreater(quiet[world],50,report)
             self.assertGreaterEqual(report['repeated_commands'],1,report)
             self.assertFalse(self.m.rows('SELECT * FROM CognitiveSuggestions WHERE world=?',(world,)))
             print('Synthetic isolated-world metrics:',report)
@@ -198,3 +205,23 @@ class LongLifeTest(unittest.TestCase):
         self.m.db.execute('UPDATE Events SET description=? WHERE id=?',('Changed without adding rows',eid))
         self.assertFalse(metrics.isolated(base.WORLD,fingerprint))
         self.assertEqual(metrics.report()['world_isolation_failures'],1)
+
+    def test_metrics_separate_retransmission_from_correlated_repeated_error(self):
+        metrics=LifeMetrics(self.m,base.WORLD)
+        target=dict(x=2,y=64,z=0,id='minecraft:oak_log')
+        first=None
+        for _ in range(2):
+            cid=str(uuid4());first=first or cid
+            payload=dict(id=cid,action='approach',target=target)
+            self.m.db.execute('INSERT INTO Commands VALUES(?,?,?,?,?,?,?,?)',
+                              (cid,base.WORLD,self.session,'fixture',json.dumps(payload),'failed','{}',now()))
+            self.m.event(base.WORLD,self.session,1,'attempt_failed','Synthetic route failure',True,
+                         dict(command=cid,reason='path_obstructed',failure_category='navigation',
+                              physical_outcome='inconclusive'),cid)
+        self.m.event(base.WORLD,str(uuid4()),1,'attempt_failed','Foreign session fixture',True,
+                     dict(command=first,reason='path_obstructed',failure_category='navigation'),str(uuid4()))
+        report=metrics.report()
+        self.assertEqual(report['repeated_commands'],0)
+        self.assertEqual(report['repeated_operational_errors'],1)
+        self.assertEqual(report['uncorrelated_operational_errors'],1)
+        self.assertEqual(report['operational_error_categories'],{'navigation':2})

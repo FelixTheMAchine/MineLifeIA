@@ -65,12 +65,62 @@ class LifeMetrics:
         def grouped(table,column):
             return {r['state']:r['n'] for r in self.memory.rows(
                 f'SELECT {column} state,count(*) n FROM {table} WHERE world=? GROUP BY {column}',(self.world,))}
+        commands={row['id']:row for row in self.memory.rows(
+            'SELECT id,session,experiment,payload FROM Commands WHERE world=?',(self.world,))}
+        seen_errors=set();repeated_errors=0;uncorrelated_errors=0;categories=Counter()
+        for row in self.memory.rows("SELECT session,evidence FROM Events WHERE world=? AND type='attempt_failed' AND verified=1 ORDER BY rowid",
+                                    (self.world,)):
+            evidence=json.loads(row['evidence']);command=commands.get(evidence.get('command'))
+            if not command or command['session']!=row['session']:
+                uncorrelated_errors+=1
+                continue
+            payload=json.loads(command['payload'])
+            key=(payload.get('action'),json.dumps(payload.get('target'),sort_keys=True),evidence.get('reason'))
+            repeated_errors+=key in seen_errors
+            seen_errors.add(key)
+            categories[evidence.get('failure_category','unclassified')]+=1
+        selections=0;uncorrelated_selections=0;older_missing_observations=0
+        mind_changed_choices=0;preference_weighted_choices=0
+        oldest=self.memory.rows('SELECT min(timestamp) oldest FROM Observations WHERE world=?',
+                                (self.world,))[0]['oldest']
+        for row in self.memory.rows("SELECT session,timestamp,evidence FROM Events WHERE world=? AND type='goal_selected' AND verified=1",
+                                    (self.world,)):
+            evidence=json.loads(row['evidence']);command=commands.get(evidence.get('command'))
+            linked=(self.memory.rows('SELECT goal_id FROM ExperimentGoals WHERE experiment=?',
+                                     (command['experiment'],)) if command else [])
+            observation=self.memory.rows('SELECT 1 FROM Observations WHERE id=? AND world=? AND session=? AND seq=?',
+                                         (evidence.get('observation_id'),self.world,row['session'],
+                                          evidence.get('observation_seq')))
+            if (not command or command['session']!=row['session'] or not linked
+                    or linked[0]['goal_id']!=evidence.get('goal')):
+                uncorrelated_selections+=1
+                continue
+            if not observation:
+                if oldest is not None and row['timestamp']<oldest:
+                    older_missing_observations+=1
+                else:
+                    uncorrelated_selections+=1
+                continue
+            selections+=1
+            chosen=next((candidate for candidate in evidence.get('alternatives',[])
+                         if candidate.get('goal')==evidence['goal']),None)
+            preference_weighted_choices+=bool(chosen and chosen.get('components',{}).get('learned_preferences',0))
+            if evidence.get('mind_influenced') and evidence.get('baseline')!=evidence['goal']:
+                mind_changed_choices+=bool(self.memory.rows(
+                    "SELECT 1 FROM MindEvaluations WHERE world=? AND session=? AND goal_id=? "
+                    "AND kind='selection' AND outcome='influenced' LIMIT 1",
+                    (self.world,row['session'],evidence['goal'])))
         return dict(cycles=self.cycles,progress_cycles=self.progress_cycles,
                     progress_events=len(self.progress_events),command_statuses=grouped('Commands','status'),
                     goal_statuses=grouped('Goals','status'),event_types=grouped('Events','type'),
                     completed_goals=grouped('Goals','status').get('completed',0),
                     blocked_goals=grouped('Goals','status').get('blocked',0),
                     recovered_storage=self.recovery_transitions,repeated_commands=self.repeated_commands,
+                    repeated_operational_errors=repeated_errors,uncorrelated_operational_errors=uncorrelated_errors,
+                    operational_error_categories=dict(categories),
+                    goal_selections=selections,uncorrelated_goal_selections=uncorrelated_selections,
+                    older_missing_goal_observations=older_missing_observations,
+                    mind_changed_choices=mind_changed_choices,preference_weighted_choices=preference_weighted_choices,
                     conservation_checks=self.conservation_checks,conservation_failures=self.conservation_failures,
                     inventory_conserved=(self.conservation_failures==0 if self.conservation_checks else None),
                     world_isolation_checks=self.isolation_checks,world_isolation_failures=self.isolation_failures,

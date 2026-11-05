@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from uuid import uuid4
 from agent.engine import CognitiveEngine
@@ -15,9 +16,9 @@ CAPS=['approach','observe','explore','eat']
 
 
 class FixtureClock:
-    def __init__(self):self.value=100.
+    def __init__(self):self.value=time.time()
     def __call__(self):return self.value
-    def advance(self):self.value+=3
+    def advance(self,seconds=3):self.value+=seconds
 
 
 class HistoryAgent:
@@ -30,6 +31,7 @@ class HistoryAgent:
         if hasattr(self,'engine'):
             self.memory.close();self.memory=MemoryManager(self.root/'memory.sqlite3')
         self.engine=CognitiveEngine(self.memory,JournalWriter(self.memory,self.root/'journals'),clock=self.clock)
+        self.engine.exploration.clock=self.clock
 
     def frame(self,results=(),position=(0,64,0),**overrides):
         self.seq+=1;self.clock.advance()
@@ -42,17 +44,20 @@ class HistoryAgent:
     def result(self,command,evidence,**frame):
         return self.frame([dict(id=command['id'],status='success',reason='synthetic_verified_fixture',evidence=evidence)],**frame)
 
-    def explore_history(self,count=80):
+    def explore_history(self,count=120):
         for index in range(count):
+            # This is a long history with rest between trips, rather than a
+            # burst that should be stopped by diminishing exploration yield.
+            self.clock.advance(self.engine.exploration.RECOVERY_SECONDS+1)
             start=(index*8,64,0);target=dict(x=start[0]+8,y=64,z=0)
             command=self.frame(position=start,frontiers=[target|dict(safe=True,path_length=8)])['command']
             if command is None or command['action']!='explore':raise AssertionError('History did not execute explore')
             self.result(command,dict(target=target,server_verified=True,dimension=DIMENSION,
                                      position=dict(x=target['x']+.5,y=64,z=.5)),position=(target['x']+.5,64,.5))
 
-    def observe_history(self):
-        for index,material in enumerate(('stone','cobblestone','deepslate','granite','diorite','andesite',
-                                         'coal_ore','iron_ore','sandstone','smooth_stone','stone_bricks','end_stone')):
+    def observe_history(self,materials=('stone','cobblestone','deepslate','granite','diorite','andesite',
+                                      'coal_ore','iron_ore','sandstone','smooth_stone','stone_bricks','end_stone')):
+        for index,material in enumerate(materials):
             target=dict(x=2,y=64,z=index%3,id='minecraft:'+material)
             block=target|dict(log=False)
             approach=self.frame(blocks=[block])['command']
@@ -63,21 +68,25 @@ class HistoryAgent:
             self.result(observe,dict(target=pos,server_verified=True,after_block=target['id']))
 
     def competition(self,**overrides):
-        return self.frame(blocks=[dict(x=2,y=64,z=0,id='minecraft:end_stone_bricks',log=False)],
+        return self.frame(blocks=[dict(x=6,y=64,z=0,id='minecraft:end_stone_bricks',log=False)],
                           frontiers=[dict(x=-1,y=64,z=0,safe=True,path_length=1)],**overrides)
 
 
 class IdentityHistoriesTest(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();root=Path(self.tmp.name)
-        self.traveler=HistoryAgent(root/'traveler');self.researcher=HistoryAgent(root/'researcher')
+        self.addCleanup(self.tmp.cleanup)
+        self.traveler=HistoryAgent(root/'traveler')
+        self.addCleanup(lambda:self.traveler.memory.close())
+        self.researcher=HistoryAgent(root/'researcher')
+        self.addCleanup(lambda:self.researcher.memory.close())
         self.traveler.explore_history();self.researcher.observe_history()
-
-    def tearDown(self):
-        self.traveler.memory.close();self.researcher.memory.close();self.tmp.cleanup()
+        # A fresh verified discovery restores travel yield before comparing
+        # acquired preferences. The frontier offers no nearby unknown block.
+        self.traveler.observe_history(('grass_block',))
 
     def test_verified_histories_change_choices_and_survive_restart(self):
-        for agent,kind,count,activity in ((self.traveler,'region_reached',80,'exploration'),(self.researcher,'observed',12,'observation')):
+        for agent,kind,count,activity in ((self.traveler,'region_reached',120,'exploration'),(self.researcher,'observed',12,'observation')):
             physical=agent.memory.rows('SELECT id FROM Events WHERE type=? AND verified=1',(kind,))
             self.assertEqual(len(physical),count)
             for event in physical:

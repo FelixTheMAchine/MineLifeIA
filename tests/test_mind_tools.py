@@ -1,11 +1,11 @@
 import json
-from contextlib import closing, redirect_stderr
+from contextlib import closing, redirect_stderr, redirect_stdout
 import io
 from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
 import zipfile
 
 import httpx
@@ -145,6 +145,19 @@ class MindToolsTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(diag.ollama_cli_report()['status'], 'unavailable')
         with patch.object(diag.subprocess, 'run', side_effect=OSError('private path')):
             self.assertEqual(diag.run_readonly(['java', '-version']), (None, ''))
+
+
+class BenchmarkCliTest(unittest.TestCase):
+    def test_unexpected_setup_exception_is_reported_without_private_traceback(self):
+        stream = io.StringIO()
+        with patch.object(bench, 'benchmark', new=AsyncMock(side_effect=RuntimeError('synthetic-private-token'))), \
+                redirect_stdout(stream):
+            bench.main([])
+        report = json.loads(stream.getvalue())
+        self.assertEqual(report['status'], 'failed')
+        self.assertEqual(report['reason'], 'internal_error')
+        self.assertNotIn('synthetic-private-token', stream.getvalue())
+        self.assertNotIn('Traceback', stream.getvalue())
 
 
 if __name__ == '__main__':

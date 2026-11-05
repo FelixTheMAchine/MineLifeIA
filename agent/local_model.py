@@ -13,12 +13,16 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from agent.contract_diagnostics import MindContractError
+
 
 class LocalModelError(Exception):
     """A public error code, deliberately excluding response bodies and prompts."""
 
-    def __init__(self, category):
+    def __init__(self, category, *, diagnostics=None, metrics=None):
         self.category = category
+        self.diagnostics = diagnostics
+        self.metrics = metrics
         super().__init__(category)
 
 
@@ -184,6 +188,7 @@ class LocalModelProvider:
 
     async def _generate(self, messages, schema, *, thinking=False):
         started = time.monotonic()
+        self._metrics = None
         try:
             self._validate()
             if (not isinstance(schema, dict) or not isinstance(messages, list) or not messages
@@ -211,18 +216,7 @@ class LocalModelProvider:
                         'model': self.model, 'messages': messages, 'stream': False,
                         'format': schema, 'think': bool(thinking), 'options': options,
                         'keep_alive': keep_alive})
-            message = data.get('message')
-            if not isinstance(message, dict) or message.get('tool_calls'):
-                raise LocalModelError('malformed_response')
-            content = message.get('content')
-            if not isinstance(content, str) or not content.strip():
-                raise LocalModelError('empty_response')
-            try:
-                parsed = json.loads(content)
-            except (ValueError, RecursionError):
-                raise LocalModelError('malformed_response') from None
-            if not self._matches(parsed, schema):
-                raise LocalModelError('schema_mismatch')
+            # Preserve numerical evidence even when the content is later rejected.
             metrics = {key: value for key in ('total_duration', 'load_duration', 'prompt_eval_count',
                        'prompt_eval_duration', 'eval_count', 'eval_duration')
                        if isinstance((value := data.get(key)), (int, float)) and not isinstance(value, bool)
@@ -230,39 +224,121 @@ class LocalModelProvider:
             duration = metrics.get('eval_duration', 0)
             metrics['tokens_per_second'] = metrics['eval_count'] * 1e9 / duration if duration and 'eval_count' in metrics else None
             metrics['wall_seconds'] = time.monotonic() - started
+            metrics['done_reason'] = data.get('done_reason') if data.get('done_reason') in ('stop', 'length', 'load', 'unload') else 'unknown'
             self._metrics = metrics
+            message = data.get('message')
+            if not isinstance(message, dict) or message.get('tool_calls'):
+                raise LocalModelError('malformed_response', diagnostics={'category': 'schema_incompatible', 'fields': ['message']})
+            content = message.get('content')
+            if not isinstance(content, str):
+                raise LocalModelError('malformed_response', diagnostics={'category': 'incorrect_type', 'fields': ['message.content']})
+            if not content.strip():
+                raise LocalModelError('empty_response', diagnostics={'category': 'empty_response', 'fields': ['message.content']})
+            metrics['response_chars'] = len(content)
+            try:
+                parsed = json.loads(content)
+            except (ValueError, RecursionError):
+                raise LocalModelError('malformed_response', diagnostics={'category': 'invalid_json', 'fields': ['message.content'], 'json_valid': False}) from None
+            issue = self._schema_issue(parsed, schema)
+            if issue is not None:
+                raise LocalModelError('schema_mismatch', diagnostics=issue.diagnostic() | {'json_valid': True})
             self._status, self._error = 'ready', None
             return LocalModelResponse(content, str(data.get('model', self.model)),
                                       data.get('created_at') if isinstance(data.get('created_at'), str) else None, metrics)
         except LocalModelError as exc:
+            exc.metrics = dict(self._metrics) if self._metrics else None
             self._failure(exc)
             raise
 
     @classmethod
     def _matches(cls, value, schema):
-        """Check the small JSON-schema subset used by the advisor, without coercion."""
+        return cls._schema_issue(value, schema) is None
+
+    @classmethod
+    def _schema_issue(cls, value, schema, *, root=None, path=(), depth=0):
+        """Validate the schema vocabulary emitted by our Pydantic contracts.
+
+        Pydantic remains authoritative in ThoughtGenerator.parse. This transport
+        check also supports legacy advisor schemas; it never coerces model output.
+        Local references and depth are bounded, with no schema/network retrieval.
+        """
+        def issue(category, location=path):
+            return MindContractError(category, ['.'.join(str(p) for p in location)])
+
+        if depth > 32 or not isinstance(schema, dict):
+            return issue('schema_incompatible')
+        root = schema if root is None else root
+        if '$ref' in schema:
+            ref = schema['$ref']
+            if not isinstance(ref, str) or not ref.startswith('#/'):
+                return issue('schema_incompatible')
+            resolved = root
+            try:
+                for part in ref[2:].split('/'):
+                    resolved = resolved[part.replace('~1', '/').replace('~0', '~')]
+            except (KeyError, TypeError):
+                return issue('schema_incompatible')
+            error = cls._schema_issue(value, resolved, root=root, path=path, depth=depth+1)
+            if error:
+                return error
+        for part in schema.get('allOf', []):
+            error = cls._schema_issue(value, part, root=root, path=path, depth=depth+1)
+            if error:
+                return error
+        if 'anyOf' in schema:
+            errors = [cls._schema_issue(value, part, root=root, path=path, depth=depth+1)
+                      for part in schema['anyOf']]
+            if all(error is not None for error in errors):
+                return next((e for e in errors if e.category != 'incorrect_type'), issue('incorrect_type'))
         kinds = {'object': dict, 'array': list, 'string': str, 'boolean': bool,
                  'integer': int, 'number': (int, float), 'null': type(None)}
         kind = schema.get('type')
         if isinstance(kind, list):
-            if not any(cls._matches(value, {**schema, 'type': k}) for k in kind):
-                return False
+            if not any(cls._schema_issue(value, {**schema, 'type': k}, root=root, path=path, depth=depth+1) is None for k in kind):
+                return issue('incorrect_type')
         elif kind in kinds:
             if not isinstance(value, kinds[kind]) or kind in ('integer', 'number') and isinstance(value, bool):
-                return False
-        if 'enum' in schema and value not in schema['enum']:
-            return False
+                return issue('incorrect_type')
+        if isinstance(value, float) and not math.isfinite(value):
+            return issue('schema_incompatible')
+        if 'const' in schema and (value != schema['const'] or isinstance(value, bool) != isinstance(schema['const'], bool)):
+            return issue('schema_incompatible')
+        if 'enum' in schema and not any(value == item and isinstance(value, bool) == isinstance(item, bool) for item in schema['enum']):
+            field = next((part for part in reversed(path) if isinstance(part, str)), None)
+            category = ('unknown_memory_reference' if field in ('memory_ids', 'memory_id')
+                        else 'unknown_evidence_reference' if field == 'evidence_ids'
+                        else 'schema_incompatible')
+            return issue(category)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if ('minimum' in schema and value < schema['minimum'] or 'maximum' in schema and value > schema['maximum']):
+                return issue('schema_incompatible')
+        if isinstance(value, str):
+            if len(value) < schema.get('minLength', 0) or len(value) > schema.get('maxLength', math.inf):
+                return issue('schema_incompatible')
         if isinstance(value, dict):
-            if any(key not in value for key in schema.get('required', [])):
-                return False
+            missing = next((key for key in schema.get('required', []) if key not in value), None)
+            if missing is not None:
+                return issue('missing_required_field', (*path, missing))
             props = schema.get('properties', {})
             if schema.get('additionalProperties') is False and set(value) - set(props):
-                return False
-            if any(not cls._matches(v, props[k]) for k, v in value.items() if k in props):
-                return False
-        if isinstance(value, list) and isinstance(schema.get('items'), dict):
-            return all(cls._matches(v, schema['items']) for v in value)
-        return True
+                return issue('schema_incompatible', (*path, '<extra>'))
+            for key, child in value.items():
+                if key in props:
+                    error = cls._schema_issue(child, props[key], root=root, path=(*path, key), depth=depth+1)
+                    if error:
+                        return error
+        if isinstance(value, list):
+            if len(value) < schema.get('minItems', 0) or len(value) > schema.get('maxItems', math.inf):
+                category = ('unknown_memory_reference' if value and path and path[-1] in ('memory_ids', 'reconsiderations') and schema.get('maxItems') == 0
+                            else 'unknown_evidence_reference' if value and path and path[-1] == 'evidence_ids' and schema.get('maxItems') == 0
+                            else 'schema_incompatible')
+                return issue(category)
+            if isinstance(schema.get('items'), dict):
+                for index, child in enumerate(value):
+                    error = cls._schema_issue(child, schema['items'], root=root, path=(*path, index), depth=depth+1)
+                    if error:
+                        return error
+        return None
 
     def snapshot(self):
         return {'provider': self.config.get('provider', 'none'), 'model': self.model,

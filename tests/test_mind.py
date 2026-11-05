@@ -140,7 +140,7 @@ class MindTests(unittest.TestCase):
         mgr=ReflectionManager(self.m,clock=lambda:self.t);mgr.set_epoch(4,'runtime');env=self.envelope(out)
         mgr.bind('p',env)
         self.assertEqual(mgr.bonus(self.s,'explore',{},'region:1'),8)
-        mgr.record_selection(self.s,dict(id='g',subject='region:1'))
+        mgr.record_selection(self.s,dict(id='g',subject='region:1'),applied=True)
         self.assertFalse(mgr.record_outcome(self.s,'g',self.eid))
         self.m.db.execute('INSERT INTO Experiments VALUES(?,?,?,?,?,?,?,?)',('x',self.s.world,self.s.session,'h','{}','done','completed',json.dumps([self.eid])))
         self.m.db.execute('INSERT INTO ExperimentGoals VALUES(?,?)',('x','g'))

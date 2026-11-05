@@ -1,6 +1,7 @@
 from typing import Literal, Annotated
 from uuid import UUID
 from pydantic import BaseModel, Field, ConfigDict, model_validator
+from agent.physiology import Physiology
 
 
 class StrictModel(BaseModel):
@@ -192,6 +193,7 @@ class Step(StrictModel):
     capabilities: list[str] = Field(default_factory=lambda: ['approach', 'break', 'collect'], max_length=32)
     control_state: Literal['ACTIVE', 'PAUSED', 'EMERGENCY_STOP', 'DISCONNECTED', 'DISABLED'] | None = None
     control_epoch: int = Field(default=0, ge=0)
+    physiology: Physiology | None = None
     biome: str = Field(default='unknown', max_length=128)
     frontiers: list[Frontier] = Field(default_factory=list, max_length=16)
     entities: list[str] = Field(default_factory=list, max_length=32)
@@ -205,3 +207,11 @@ class Step(StrictModel):
     tilling: list[TillingOffer] = Field(default_factory=list, max_length=12)
     storage: list[Pos] = Field(default_factory=list, max_length=8)
     social: list[SocialObservation] = Field(default_factory=list, max_length=8)
+
+    @model_validator(mode='after')
+    def physiology_scope(self):
+        p = self.physiology
+        if p is not None and (UUID(p.session) != self.session or p.world != self.world
+                              or p.dimension != self.dimension or p.control_epoch != self.control_epoch):
+            raise ValueError('Physiology outside observation scope')
+        return self

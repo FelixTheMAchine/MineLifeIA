@@ -59,7 +59,7 @@ class CognitiveLanguageEngine:
     def context(self,s,goals,personality,interests):
         available=[dict(subject=g['subject'],description=g['description'],skill=g['skill']) for g in goals if g['status'] in ('pending','running')][:8]
         recent=self.m.rows("SELECT id,type,day,description FROM Events WHERE world=? AND verified=1 AND type NOT IN "
-                           "('goal','question','interest','furnace_inspected','construction_step','shelter_inspected') ORDER BY timestamp DESC LIMIT 6",(s.world,))
+                           "('goal','goal_selected','question','interest','furnace_inspected','construction_step','shelter_inspected') ORDER BY timestamp DESC LIMIT 6",(s.world,))
         cue=' '.join(g['description'] for g in available)+' '+' '.join(e['type']+' '+e['description'] for e in recent[:2])
         recalled=self.autobiography.recall(s.world,cue,3)
         facts={e['id']:e for e in recent}

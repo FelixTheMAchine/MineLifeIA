@@ -20,8 +20,6 @@ class IdentityEngine:
         if kind in ACTIVITIES:changes.append(('activity',ACTIVITIES[kind],1.))
         if kind=='region_reached':changes.append(('biome',s.biome,1.))
         if kind=='resource_mined':changes.append(('material',evidence.get('before_block','unknown'),1.))
-        if kind=='attempt_failed':
-            subject=evidence.get('subject','');changes=[('material',subject,-1.)] if subject else []
         for category,subject,signal in changes:
             if subject=='unknown':continue
             if self.m.rows('SELECT 1 FROM PreferenceUpdates WHERE world=? AND source=? AND category=? AND subject=?',(s.world,eid,category,subject)):continue

@@ -9,6 +9,7 @@ import time
 import uuid
 
 from agent.local_model import LocalModelProvider
+from agent.contract_diagnostics import safe_public_error
 from agent.resources import ResourceProbe
 
 
@@ -33,6 +34,7 @@ class CognitiveScheduler:
         self.closed = False
         self.status = 'disabled' if self.config.get('provider', 'none') == 'none' else 'idle'
         self.error = None
+        self.diagnostic = None
         self.last_call = self.last_deep = -math.inf
         self.cooldown_until = -math.inf
         self.calls = deque()
@@ -162,6 +164,10 @@ class CognitiveScheduler:
             now = self._prune()
             if not self._current(job) or self._expired(job):
                 self.discarded += 1
+                self.error = 'stale_context'
+                self.diagnostic = {'category': 'stale_context', 'fields': []}
+                if self._current(job):
+                    self.status = 'stale'
                 continue
             if self.disabled_budget:
                 self.status = 'budget_disabled'
@@ -197,6 +203,7 @@ class CognitiveScheduler:
             try:
                 from agent.mind import ThoughtGenerator
                 messages = ThoughtGenerator.messages(job['context'], job['purpose'])
+                schema = ThoughtGenerator.schema(job['context'])
                 thinking = False
                 self.deep_reason = 'opt_in_disabled' if job['context'].get('deep_trigger') else 'not_requested'
                 if job['deep']:
@@ -215,13 +222,13 @@ class CognitiveScheduler:
                     self.calls.append(now)
                     try:
                         try:
-                            response = await self.provider.generate(messages, ThoughtGenerator.schema(), thinking=thinking)
+                            response = await self.provider.generate(messages, schema, thinking=thinking)
                         except Exception as exc:
                             if not thinking or getattr(exc, 'category', None) != 'thinking_unsupported':
                                 raise
                             thinking = self.thinking_mode = False
                             self.deep_reason = 'thinking_unsupported'
-                            response = await self.provider.generate(messages, ThoughtGenerator.schema(), thinking=False)
+                            response = await self.provider.generate(messages, schema, thinking=False)
                         output = ThoughtGenerator.parse(response.content, job['context'], job['purpose'])
                         if self._current(job) and not self._expired(job):
                             self.seen.append(job['key'])
@@ -232,9 +239,12 @@ class CognitiveScheduler:
                                            'runtime_id': self.runtime_id, 'created_at': time.time(),
                                            'expires_at': job['context'].get('expires_at')}
                             self.status, self.error = 'ready', None
+                            self.diagnostic = None
                         else:
                             self.discarded += 1
                             self.status = 'stale'
+                            self.error = 'stale_context'
+                            self.diagnostic = {'category': 'stale_context', 'fields': []}
                         break
                     except asyncio.CancelledError:
                         raise
@@ -242,7 +252,8 @@ class CognitiveScheduler:
                         if not self._current(job):
                             self.discarded += 1
                             break
-                        category = getattr(exc, 'category', type(exc).__name__)
+                        self.diagnostic = safe_public_error(exc)
+                        category = self.diagnostic['category']
                         self.error = category
                         # A timed-out exchange may still be draining remotely: never immediately retry it.
                         if attempt + 1 == attempts or category not in ('unavailable', 'server_error'):
@@ -253,7 +264,8 @@ class CognitiveScheduler:
                 raise
             except Exception as exc:
                 if self._current(job):
-                    self.error = getattr(exc, 'category', type(exc).__name__)
+                    self.diagnostic = safe_public_error(exc)
+                    self.error = self.diagnostic['category']
                     self.status = 'fallback'
                     self.cooldown_until = self.clock() + self._number('failure_cooldown_seconds', 30, 0, 600)
             finally:
@@ -291,7 +303,7 @@ class CognitiveScheduler:
 
     def snapshot(self):
         self._prune()
-        return {'status': self.status, 'error': self.error, 'calls_last_hour': len(self.calls),
+        return {'status': self.status, 'error': self.error, 'diagnostic': self.diagnostic, 'calls_last_hour': len(self.calls),
                 'fallback': self.config.get('provider','none')=='none' or self.status in ('fallback', 'budget_disabled', 'disabled'),
                 'queue_depth': len(self.queue), 'inference_active': self.active_key is not None,
                 'generation': self.generation, 'discarded': self.discarded,

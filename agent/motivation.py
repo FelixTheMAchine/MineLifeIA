@@ -1,5 +1,6 @@
 import json
 from agent.memory import now
+from agent.needs import project_needs
 
 PERSONALITY = dict(curiosity=95, creativity=90, persistence=90, prudence=60,
                    sociability=70, ambition=75, empathy=80, exploration=95, learning=95)
@@ -21,9 +22,10 @@ class MotivationEngine:
                              True, {'before': old, 'after': PERSONALITY, 'reason': 'user_requested_v0.2_preset'}, 'personality:v2')
             self.m.db.execute('INSERT INTO AgentMigrations VALUES(?,2)', (world,))
 
-    def evaluate(self, s, novelty, frontier_count):
+    def evaluate(self, s, novelty, frontier_count, exploration_score=None):
         p = self.values(s.world)
-        danger = s.player.danger or s.player.health <= 8 or s.player.food <= 6
+        needs = project_needs(s,self.safety_limits(s.world))
+        danger = any(needs['risk'][key]['value'] for key in ('danger','health_critical','food_urgent'))
         values = {
             'DISCOVERY': (p['curiosity'] if novelty else 25, 'Novidade observada' if novelty else 'Nenhuma novidade executável próxima'),
             'UNDERSTANDING': (65, 'Relacionar perguntas com conhecimento confirmado'),
@@ -34,11 +36,13 @@ class MotivationEngine:
             'AUTONOMY': (p['ambition'] * .6, 'Selecionar próximo passo executável'),
             'SOCIAL': (p['sociability'] * .3, 'Observação social; interação ainda indisponível'),
         }
+        if exploration_score is not None:
+            values['EXPLORATION'] = (exploration_score['score'], json.dumps(exploration_score, sort_keys=True))
         for name, (score, reason) in values.items():
             self.m.db.execute('INSERT INTO Motivations VALUES(?,?,?,?,?) ON CONFLICT(world,name) DO UPDATE '
                               'SET score=excluded.score,reason=excluded.reason,updated=excluded.updated',
                               (s.world, name, score, reason, now()))
-        return max(values, key=lambda name: values[name][0]), p
+        return ('SURVIVAL' if danger else max(values, key=lambda name: values[name][0])), p
 
     def values(self, world):
         stored = self.m.rows('SELECT values_json FROM Personality WHERE world=?', (world,))
@@ -64,12 +68,6 @@ class MotivationEngine:
                             ('learning', .2, 'Uma receita foi confirmada por consumo, saída e estatística')])
         if kind == 'region_reached' and success:
             changes.append(('exploration', .2, 'Uma chegada a uma fronteira local foi confirmada'))
-        if kind == 'attempt_failed':
-            changes.append(('prudence', .2, 'Uma tentativa sem prova aumenta gradualmente a margem operacional de prudência'))
-        prior_failure = self.m.rows("SELECT 1 FROM Events WHERE world=? AND type='attempt_failed' AND day<=? LIMIT 1",
-                                    (s.world, s.day))
-        if success and prior_failure and kind in ('collected', 'crafted', 'region_reached'):
-            changes.append(('persistence', .15, 'Conclusão verificada após falhas anteriores'))
         if kind in ('collected', 'crafted') and success and s.player.health >= 16 and s.player.food >= 14:
             changes.append(('prudence', -.1, 'Uma ação concluída em contexto observado com margem segura'))
         if not changes:
