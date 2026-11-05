@@ -57,6 +57,7 @@ Commits locais desta sessão: nenhum. Arquivos diretamente alterados nesta sess�
 - **Repetição controlada do seed 19:** com 6.460 MB livres antes de B, o modelo ainda esgotou 60 s; a leitura após a chamada foi 3.062 MB. C foi pulado pelo guarda do par. Logo, a baixa RAM da primeira tentativa não explica sozinha o timeout. Não há par B/C completo nem inferência de eficácia. Não repetir a chamada sem reduzir e testar o custo do contexto ou rever o orçamento de inferência de modo explícito.
 - **Validação final:** suíte Python 437/437 e build Fabric aprovados após endurecimento dos guardas (`verifyControl` 136, `verifyPhysiology` 50, `verifyPickupNavigation` 65, `verifyShelter` 389, `verifyTools` 10). Depois dos ajustes pontuais, `test_adaptive_planning.py` 12/12, `test_long_life.py` 4/4 e `test_experiment_real_compare.py` 5/5 passaram; `git diff --check` sem erros. Nenhum teste equivale a gameplay.
 - **Próxima tarefa:** reduzir e medir o custo do contexto da fixture B/C antes de outra inferência real; não ampliar o timeout automaticamente nem concluir efeito da memória. O piloto manual continua condicionado ao procedimento de backup. Não houve gameplay, alteração de save ou instalação.
+- **Marco versionado:** commit `2994ec3` enviado a `origin/main` no repositório oficial após revisão de 64 arquivos e validação. Dados privados e logs ficaram fora do índice.
 
 ### Rotação segura de token — procedimento pendente, sem execução
 
